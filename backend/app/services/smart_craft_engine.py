@@ -416,7 +416,10 @@ class SmartCraftEngine:
                 if opt["market"] == "BAZAAR" and result_item_id in bazaar_dict:
                     hourly_vol = int(bazaar_dict[result_item_id].sell_moving_week / 168)
 
-                pph = profit * min(60.0, max(1.0, hourly_vol * 0.10))
+                if hourly_vol <= 0:
+                    pph = 0.0
+                else:
+                    pph = profit * min(60.0, max(1.0, hourly_vol * 0.10))
 
                 results.append(
                     SmartCraftFlipItem(

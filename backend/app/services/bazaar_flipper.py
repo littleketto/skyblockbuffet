@@ -70,15 +70,18 @@ async def calculate_bazaar_flips(
         if hourly_volume < min_hourly_volume:
             continue
 
-        # Pazar Payi (Alpha): Bir oyuncu o pazardaki saatlik hacmin yaklasik %10'unu cevirebilir
-        fillable_per_hour = max(1.0, float(hourly_volume) * market_share_alpha)
-        profit_per_hour = profit_per_item * fillable_per_hour
-
-        # Dengeli Siralama Puani (Ranking Score)
-        # Sadece kara bakarsak hacmi 2 olan urunler basa cikar.
-        # Sadece hacme bakarsak 1 coin kazandiran urunler basa cikar.
-        # Logaritmik hacim carpanli dengeli skor:
-        score = profit_per_hour * math.log10(max(10, hourly_volume))
+        # Eger saatlik hacim 0 ise (haftalik alim veya satim hic yoksa), esyayi alan/satan olmadigi icin
+        # gerceklesebilir saatlik kar (PPH) ve siralama puani sifirdir.
+        if hourly_volume <= 0:
+            fillable_per_hour = 0.0
+            profit_per_hour = 0.0
+            score = 0.0
+        else:
+            # Pazar Payi (Alpha): Bir oyuncu o pazardaki saatlik hacmin yaklasik %10'unu cevirebilir (en az 1 adet)
+            fillable_per_hour = max(1.0, float(hourly_volume) * market_share_alpha)
+            profit_per_hour = profit_per_item * fillable_per_hour
+            # Dengeli Siralama Puani (Ranking Score)
+            score = profit_per_hour * math.log10(max(10, hourly_volume))
 
         flips.append(
             BazaarFlipItem(
@@ -98,6 +101,6 @@ async def calculate_bazaar_flips(
             )
         )
 
-    # En yuksek skora (veya saatlik kara) gore sirala
-    flips.sort(key=lambda x: x.profit_per_hour, reverse=True)
+    # En yuksek saatlik kara (veya ayni kar ise adet basina kara) gore sirala
+    flips.sort(key=lambda x: (x.profit_per_hour, x.profit_per_item), reverse=True)
     return flips[:limit] if limit is not None else flips
