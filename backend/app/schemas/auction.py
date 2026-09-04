@@ -1,4 +1,4 @@
-﻿from typing import Optional
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -13,6 +13,7 @@ class AHFlipItem(BaseModel):
     target_sell_price: float = Field(..., description="Tavsiye edilen satis fiyati")
     net_profit: float = Field(..., description="AH vergisi dusulmus net kar")
     margin_percent: float = Field(..., description="Kar yuzdesi (ROI %)")
+    profit_per_hour: float = Field(0.0, description="Saatlik tahmini net kar (PPH)")
 
     total_listings: int = Field(..., description="Pazardaki toplam aktif ilan sayisi")
     auction_uuid: str = Field(..., description="Oyunda /viewauction <uuid> ile alinacak ilan ID'si")

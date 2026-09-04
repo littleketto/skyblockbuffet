@@ -496,7 +496,7 @@
         sortColumn = 'net_profit';
         sortDirection = 'desc';
       } else if (tab === 'auction') {
-        sortColumn = 'net_profit';
+        sortColumn = 'profit_per_hour';
         sortDirection = 'desc';
       }
 
@@ -728,7 +728,8 @@
             ${getSortHeaderHtml('24s Satış Hacmi', 'daily_volume', 'text-center')}
             ${getSortHeaderHtml('Tahmini Net Kar', 'net_profit', 'text-emerald-400')}
             ${getSortHeaderHtml('ROI %', 'margin_percent', 'text-amber-400')}
-            <th class="px-6 py-3.5 text-center">Oyun İçi Komut</th>
+            ${getSortHeaderHtml('Saatlik Kar (PPH)', 'profit_per_hour', 'text-cyan-400 font-bold')}
+            <th class="px-6 py-3.5 text-center font-sans">Geçmiş & Komut</th>
           </tr>
         `;
         tbody.innerHTML = displayItems.map(item => {
@@ -744,7 +745,9 @@
             badgeText = "Riskli";
           }
 
-          const volumeDisplay = item.daily_volume > 0 ? `${item.daily_volume} satış` : '<span class="opacity-60">-</span>';
+          const volumeDisplay = item.daily_volume > 0 
+            ? `${item.daily_volume} satış` 
+            : `<button onclick="querySingleAHHistory('${item.item_id}', '${item.item_name.replace(/'/g, "\\'")}')" class="text-[10px] text-cyan-400 underline hover:text-cyan-300">Sorgula</button>`;
 
           return `
             <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
@@ -766,11 +769,17 @@
               </td>
               <td class="px-6 py-3 font-bold text-emerald-400 font-mono">+${formatNumber(item.net_profit)}</td>
               <td class="px-6 py-3 text-amber-400 font-semibold font-mono">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 font-bold text-cyan-400 text-sm font-mono">${formatNumber(item.profit_per_hour || 0)}</td>
               <td class="px-6 py-3 text-center font-sans">
-                <button onclick="copyToClipboard('${cmd}', 'Komut Kopyalandı!')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition">
-                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-                  Kopyala
-                </button>
+                <div class="flex items-center justify-center gap-1.5">
+                  <button onclick="querySingleAHHistory('${item.item_id}', '${item.item_name.replace(/'/g, "\\'")}')" class="p-1.5 bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white border border-cyan-500/30 rounded-lg text-xs transition" title="24s Geçmiş Satış Detayı">
+                    <i data-lucide="line-chart" class="w-3.5 h-3.5"></i>
+                  </button>
+                  <button onclick="copyToClipboard('${cmd}', 'Komut Kopyalandı!')" class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition" title="Oyunda Aç: ${cmd}">
+                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                    Kopyala
+                  </button>
+                </div>
               </td>
             </tr>
           `;
@@ -1079,6 +1088,71 @@
       if (bazaarChartInstance) {
         bazaarChartInstance.destroy();
         bazaarChartInstance = null;
+      }
+    }
+
+    async function querySingleAHHistory(itemId, itemName) {
+      if (!itemId) {
+        showToast('Eşya kodu bulunamadı');
+        return;
+      }
+      const modal = document.getElementById('bazaarHistoryModal');
+      const title = document.getElementById('histModalTitle');
+      const subtitle = document.getElementById('histModalSubtitle');
+      const loading = document.getElementById('histModalLoading');
+      const content = document.getElementById('histModalContent');
+
+      title.innerText = itemName;
+      subtitle.innerText = `${itemId} • Auction House 24s Satış Detayı`;
+
+      modal.classList.remove('hidden');
+      loading.classList.remove('hidden');
+      content.classList.add('hidden');
+      lucide.createIcons();
+
+      try {
+        const res = await fetch(`/api/v1/auction/history/${itemId}`);
+        const data = await res.json();
+
+        if (data.error || !data.daily_volume) {
+          loading.innerHTML = `
+            <div class="text-center py-6">
+              <p class="text-sm font-bold text-amber-400">Son 24 saatte bu eşyadan satış gerçekleşmedi.</p>
+              <p class="text-xs text-slate-400 mt-1">Bu eşya düşük likiditeli veya nadir bir eşya olabilir.</p>
+            </div>
+          `;
+          return;
+        }
+
+        // 24s Kartı
+        document.getElementById('histAvgBuy24h').innerText = data.avg_price ? `${formatNumber(data.avg_price)} coins (Ort.)` : 'N/A';
+        document.getElementById('histAvgSell24h').innerText = `${formatNumber(data.daily_volume)} adet satış`;
+        const rangeText = (data.min_price && data.max_price)
+          ? `${formatNumber(data.min_price)} - ${formatNumber(data.max_price)} coins`
+          : '-';
+        document.getElementById('histRangeBuy24h').innerText = rangeText;
+
+        // 7g Kartı
+        document.getElementById('histAvgBuy7d').innerText = 'N/A';
+        document.getElementById('histAvgSell7d').innerText = 'N/A';
+        document.getElementById('histWeeklyVol').innerText = `${formatNumber(data.daily_volume * 7)} tahmini / hafta`;
+
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+
+        // Tablodaki bu item'ın daily_volume değerini de hafızada güncelle
+        if (filteredData) {
+          const target = filteredData.find(x => x.item_id === itemId || x.item_name === itemName);
+          if (target) {
+            target.daily_volume = data.daily_volume;
+            target.avg_sold_price = data.avg_price;
+          }
+        }
+      } catch (err) {
+        console.error("AH geçmişi yüklenemedi:", err);
+        loading.innerHTML = `<p class="text-xs text-rose-400">Geçmiş satış verisi sorgulanırken hata oluştu.</p>`;
+      } finally {
+        lucide.createIcons();
       }
     }
 

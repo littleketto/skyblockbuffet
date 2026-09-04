@@ -26,3 +26,16 @@ async def get_auction_flips(
         limit=limit,
         fresh=fresh,
     )
+
+
+@router.get("/history/{item_id}")
+async def get_auction_item_history(item_id: str):
+    """
+    Kullanici herhangi bir AH esyasinin gecmis satislarina veya
+    24s hacmine anlik bakmak istediginde tekil olarak sorgular.
+    """
+    from app.services.coflnet_service import coflnet_service
+    history = await coflnet_service.get_item_history_24h(item_id)
+    if not history:
+        return {"item_id": item_id, "error": "Geçmiş satış verisi bulunamadı", "daily_volume": 0}
+    return {"item_id": item_id, **history}

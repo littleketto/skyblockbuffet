@@ -190,8 +190,8 @@ class AuctionService:
                 # En yuksek kara gore sirala
                 processed_items.sort(key=lambda x: x["profit"], reverse=True)
 
-                # En yuksek karli ilk 40 esyanin gecmisini Coflnet'ten asenkron zenginlestir
-                top_slice = processed_items[:40]
+                # Kullanicinin istegi dogrultusunda ilk 300 adayin 24s gercek satis gecmisini Coflnet'ten asenkron zenginlestir
+                top_slice = processed_items[:300]
                 history_tasks = [coflnet_service.get_item_history_24h(c["item_id"]) for c in top_slice]
                 histories = await asyncio.gather(*history_tasks)
 
@@ -226,11 +226,22 @@ class AuctionService:
                             target_sell_price = round(avg_price * 1.02, 0)
                             profit = round((target_sell_price * 0.98) - lbin, 0)
                             margin = round((profit / lbin) * 100.0, 1) if lbin > 0 else 0.0
+                        else:
+                            target_sell_price = c["target_sell"]
                     else:
                         target_sell_price = c["target_sell"]
                         if profit > 5000000 and (second_lbin / max(1.0, lbin)) > 4.0:
                             liquidity_status = "RISKLI"
                             risk_warning = "2. BIN ile aradaki fark cok yuksek, manipule ilan olabilir."
+
+                    # PPH (Profit Per Hour - Saatlik Tahmini Kar) Hesabi:
+                    # Bir oyuncu saatlik ortalama o esyadaki pazar hacminin %10-%15'ini cevirebilir
+                    if daily_vol > 0 and profit > 0:
+                        hourly_cap = max(0.1, (daily_vol / 24.0) * 0.15)
+                        pph = round(profit * hourly_cap, 0)
+                    else:
+                        # Hacmi 0 veya gecmisi olmayan esyalarda PPH 0 yapilir (manipule / satilmayan esyalar listeyi kirletmez)
+                        pph = 0.0
 
                     enriched_flips.append(
                         AHFlipItem(
@@ -243,6 +254,7 @@ class AuctionService:
                             target_sell_price=round(target_sell_price, 0),
                             net_profit=round(profit, 0),
                             margin_percent=round(margin, 1),
+                            profit_per_hour=pph,
                             total_listings=c["total_listings"],
                             auction_uuid=c["lbin_auc"].get("uuid", ""),
                             daily_volume=daily_vol,
@@ -252,8 +264,10 @@ class AuctionService:
                         )
                     )
 
-                # Nihai siralama: Once net kara gore sirala
-                enriched_flips.sort(key=lambda x: (x.net_profit, x.margin_percent), reverse=True)
+                # Nihai siralama:
+                # 1. Gercekten hacmi olan ve PPH ureten likit esyalar en uste cikar.
+                # 2. Hacmi 0 olan sahte / manipule fiyatlar geriye duser.
+                enriched_flips.sort(key=lambda x: (x.profit_per_hour, x.net_profit), reverse=True)
                 self._cached_flips = enriched_flips
                 self._last_fetch_time = time.time()
                 all_items = self._cached_flips
