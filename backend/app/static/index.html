@@ -149,12 +149,12 @@
         <label class="block text-xs font-medium text-slate-400 mb-1">Minimum Net Kar (Coins)</label>
         <div class="relative">
           <i data-lucide="trending-up" class="w-4 h-4 absolute left-3 top-3 text-emerald-400"></i>
-          <input type="number" id="minProfitInput" value="10000" class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white transition" />
+          <input type="number" id="minProfitInput" value="0" placeholder="0" class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white transition" />
         </div>
       </div>
 
       <div class="flex items-end">
-        <button onclick="loadActiveTab()" class="w-full bg-dark-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-200 hover:text-white py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2">
+        <button onclick="loadActiveTab(true)" class="w-full bg-dark-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-200 hover:text-white py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2">
           <i data-lucide="filter" class="w-4 h-4"></i>
           Filtreleri Uygula
         </button>
@@ -195,7 +195,7 @@
     </div>
 
     <!-- TABLE CONTAINER -->
-    <div class="bg-dark-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+    <div id="tableContainer" class="bg-dark-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
       <div class="overflow-x-auto">
         <table class="w-full text-left text-sm">
           <thead id="table-head" class="bg-dark-850/80 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800"></thead>
@@ -213,6 +213,25 @@
       <div id="empty" class="hidden py-16 flex flex-col items-center justify-center gap-3">
         <i data-lucide="inbox" class="w-8 h-8 text-slate-600"></i>
         <p class="text-sm text-slate-500">Seçilen filtrelere uygun fırsat bulunamadı.</p>
+      </div>
+
+      <!-- Pagination Bar -->
+      <div id="paginationBar" class="hidden border-t border-slate-800/80 bg-dark-850/60 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 text-xs font-sans text-slate-400">
+        <div class="flex items-center gap-3">
+          <span>Toplam <b id="pageTotalCount" class="text-slate-200">0</b> eşyadan <b id="pageRangeText" class="text-slate-200">0 - 0</b> arası gösteriliyor</span>
+          <div class="flex items-center gap-1.5 border-l border-slate-800 pl-3">
+            <span>Sayfa Başı:</span>
+            <select id="pageSizeSelect" onchange="changePageSize(this.value)" class="bg-dark-800 border border-slate-700 text-slate-200 px-2 py-1 rounded text-xs focus:outline-none focus:border-emerald-500">
+              <option value="50">50</option>
+              <option value="100" selected>100</option>
+              <option value="200">200</option>
+              <option value="500">500</option>
+              <option value="all">Tümü</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="paginationButtons" class="flex items-center gap-1"></div>
       </div>
     </div>
 
@@ -263,6 +282,9 @@
     let currentTab = 'bazaar';
     let craftMarket = 'all';
     let rawData = [];
+    let filteredData = [];
+    let currentPage = 1;
+    let pageSize = 100;
     const REFRESH_INTERVAL = 30;
     let countdown = REFRESH_INTERVAL;
     let isAutoRefreshPaused = false;
@@ -318,6 +340,10 @@
 
     function switchTab(tab) {
       currentTab = tab;
+      currentPage = 1;
+      const searchEl = document.getElementById('searchInput');
+      if (searchEl) searchEl.value = '';
+
       document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
         btn.classList.add('text-slate-400');
@@ -367,14 +393,14 @@
         tbody.innerHTML = '';
       }
 
-      const minProfit = document.getElementById('minProfitInput').value || '10000';
+      const minProfit = document.getElementById('minProfitInput').value || '0';
       const budget = document.getElementById('budgetInput').value;
       let budgetParam = budget ? `&max_budget=${budget}` : '';
       let freshParam = isManual ? '&fresh=true' : '';
 
       let url = '';
       if (currentTab === 'bazaar') {
-        url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=100${freshParam}`;
+        url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
       } else if (currentTab === 'craft') {
         url = `/api/v1/craft/smart-flips?market=${craftMarket}&min_profit=${minProfit}${budgetParam}&limit=60${freshParam}`;
       } else if (currentTab === 'auction') {
@@ -384,7 +410,7 @@
       try {
         const res = await fetch(url);
         rawData = await res.json();
-        renderTable(rawData);
+        filterCurrentData();
       } catch (err) {
         console.error("Veri yukleme hatasi:", err);
         if (isManual) showToast("Hata: Veriler yuklenemedi!");
@@ -398,13 +424,18 @@
       }
     }
 
-    function renderTable(data) {
+    function renderTable(data, updateFiltered = true) {
+      if (updateFiltered) filteredData = data;
       const tbody = document.getElementById('table-body');
       const thead = document.getElementById('table-head');
       const empty = document.getElementById('empty');
+      const paginationBar = document.getElementById('paginationBar');
 
       if (!data || data.length === 0) {
         empty.classList.remove('hidden');
+        tbody.innerHTML = '';
+        thead.innerHTML = '';
+        if (paginationBar) paginationBar.classList.add('hidden');
         updateMetrics(0, 0, 0);
         return;
       }
@@ -414,6 +445,20 @@
       let sumROI = 0;
 
       if (currentTab === 'bazaar') {
+        data.forEach(item => {
+          maxPPH = Math.max(maxPPH, item.profit_per_hour);
+          sumROI += item.margin_percent;
+        });
+
+        const totalItems = data.length;
+        const isAll = (pageSize === 'all');
+        const totalPages = isAll ? 1 : Math.max(1, Math.ceil(totalItems / pageSize));
+        if (currentPage > totalPages) currentPage = Math.max(1, totalPages);
+        if (currentPage < 1) currentPage = 1;
+
+        const displayItems = isAll ? data : data.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+        renderPagination(totalItems);
+
         thead.innerHTML = `
           <tr>
             <th class="px-6 py-3.5">Eşya Adı</th>
@@ -425,26 +470,23 @@
             <th class="px-6 py-3.5 text-cyan-400 font-bold">Saatlik Kar (PPH)</th>
           </tr>
         `;
-        tbody.innerHTML = data.map(item => {
-          maxPPH = Math.max(maxPPH, item.profit_per_hour);
-          sumROI += item.margin_percent;
-          return `
-            <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
-              <td class="px-6 py-3 font-sans font-medium text-slate-200">
-                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.name}</span>
-                <span class="block text-[10px] text-slate-500 font-mono">${item.item_id}</span>
-              </td>
-              <td class="px-6 py-3 text-slate-300">${formatNumber(item.buy_price)}</td>
-              <td class="px-6 py-3 text-slate-300">${formatNumber(item.sell_price)}</td>
-              <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.profit_per_item)}</td>
-              <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
-              <td class="px-6 py-3 text-slate-400">${formatNumber(item.hourly_volume)} /saat</td>
-              <td class="px-6 py-3 font-bold text-cyan-400 text-sm">${formatNumber(item.profit_per_hour)}</td>
-            </tr>
-          `;
-        }).join('');
+        tbody.innerHTML = displayItems.map(item => `
+          <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
+            <td class="px-6 py-3 font-sans font-medium text-slate-200">
+              <span class="tier-${item.tier || 'COMMON'} font-bold">${item.name}</span>
+              <span class="block text-[10px] text-slate-500 font-mono">${item.item_id}</span>
+            </td>
+            <td class="px-6 py-3 text-slate-300">${formatNumber(item.buy_price)}</td>
+            <td class="px-6 py-3 text-slate-300">${formatNumber(item.sell_price)}</td>
+            <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.profit_per_item)}</td>
+            <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
+            <td class="px-6 py-3 text-slate-400">${formatNumber(item.hourly_volume)} /saat</td>
+            <td class="px-6 py-3 font-bold text-cyan-400 text-sm">${formatNumber(item.profit_per_hour)}</td>
+          </tr>
+        `).join('');
 
       } else if (currentTab === 'craft') {
+        if (paginationBar) paginationBar.classList.add('hidden');
         thead.innerHTML = `
           <tr>
             <th class="px-6 py-3.5">Üretilen Eşya</th>
@@ -492,6 +534,7 @@
         }).join('');
 
       } else if (currentTab === 'auction') {
+        if (paginationBar) paginationBar.classList.add('hidden');
         thead.innerHTML = `
           <tr>
             <th class="px-6 py-3.5">Eşya Adı</th>
@@ -564,15 +607,95 @@
     function filterCurrentData() {
       const search = document.getElementById('searchInput').value.toLowerCase();
       if (!search) {
-        renderTable(rawData);
+        filteredData = rawData || [];
+      } else {
+        filteredData = (rawData || []).filter(item => {
+          const name = (item.name || item.result_name || item.item_name || '').toLowerCase();
+          const id = (item.item_id || item.result_item_id || '').toLowerCase();
+          return name.includes(search) || id.includes(search);
+        });
+      }
+      renderTable(filteredData, false);
+    }
+
+    function renderPagination(totalItems) {
+      const paginationBar = document.getElementById('paginationBar');
+      if (currentTab !== 'bazaar' || totalItems <= 0) {
+        if (paginationBar) paginationBar.classList.add('hidden');
         return;
       }
-      const filtered = rawData.filter(item => {
-        const name = (item.name || item.result_name || item.item_name || '').toLowerCase();
-        const id = (item.item_id || item.result_item_id || '').toLowerCase();
-        return name.includes(search) || id.includes(search);
+      paginationBar.classList.remove('hidden');
+
+      const isAll = (pageSize === 'all');
+      const totalPages = isAll ? 1 : Math.max(1, Math.ceil(totalItems / pageSize));
+      if (currentPage > totalPages) currentPage = Math.max(1, totalPages);
+      if (currentPage < 1) currentPage = 1;
+
+      const startIdx = isAll ? 1 : (currentPage - 1) * pageSize + 1;
+      const endIdx = isAll ? totalItems : Math.min(currentPage * pageSize, totalItems);
+
+      const totalCountEl = document.getElementById('pageTotalCount');
+      const rangeEl = document.getElementById('pageRangeText');
+      if (totalCountEl) totalCountEl.innerText = formatNumber(totalItems);
+      if (rangeEl) rangeEl.innerText = `${formatNumber(startIdx)} - ${formatNumber(endIdx)}`;
+
+      const container = document.getElementById('paginationButtons');
+      if (!container) return;
+
+      if (totalPages <= 1) {
+        container.innerHTML = `<span class="px-2.5 py-1 text-slate-500 font-semibold text-xs">Sayfa 1 / 1</span>`;
+        return;
+      }
+
+      let html = '';
+
+      // First & Prev
+      const prevDisabled = currentPage === 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-dark-800 text-slate-300 hover:text-white';
+      html += `<button onclick="goToPage(1)" ${currentPage === 1 ? 'disabled' : ''} class="px-2 py-1 border border-slate-700/80 rounded ${prevDisabled}" title="İlk Sayfa">« İlk</button>`;
+      html += `<button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''} class="px-2.5 py-1 border border-slate-700/80 rounded ${prevDisabled}" title="Önceki Sayfa">‹ Önceki</button>`;
+
+      // Page numbers (smart window around current page)
+      let pages = [];
+      const delta = 2;
+      for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+          pages.push(i);
+        } else if (pages[pages.length - 1] !== '...') {
+          pages.push('...');
+        }
+      }
+
+      pages.forEach(p => {
+        if (p === '...') {
+          html += `<span class="px-2 py-1 text-slate-600">...</span>`;
+        } else if (p === currentPage) {
+          html += `<button class="px-3 py-1 bg-emerald-600 text-white font-bold rounded border border-emerald-500 shadow-sm">${p}</button>`;
+        } else {
+          html += `<button onclick="goToPage(${p})" class="px-3 py-1 border border-slate-700/80 text-slate-300 hover:bg-dark-800 hover:text-white rounded transition">${p}</button>`;
+        }
       });
-      renderTable(filtered);
+
+      // Next & Last
+      const nextDisabled = currentPage === totalPages ? 'opacity-30 cursor-not-allowed' : 'hover:bg-dark-800 text-slate-300 hover:text-white';
+      html += `<button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''} class="px-2.5 py-1 border border-slate-700/80 rounded ${nextDisabled}" title="Sonraki Sayfa">Sonraki ›</button>`;
+      html += `<button onclick="goToPage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''} class="px-2.5 py-1 border border-slate-700/80 rounded ${nextDisabled}" title="Son Sayfa">Son »</button>`;
+
+      container.innerHTML = html;
+    }
+
+    function goToPage(p) {
+      currentPage = p;
+      renderTable(filteredData, false);
+      const tableTop = document.getElementById('tableContainer');
+      if (tableTop) {
+        window.scrollTo({ top: tableTop.offsetTop - 80, behavior: 'smooth' });
+      }
+    }
+
+    function changePageSize(val) {
+      pageSize = (val === 'all') ? 'all' : parseInt(val, 10);
+      currentPage = 1;
+      renderTable(filteredData, false);
     }
 
     function openGuideModal(idx) {

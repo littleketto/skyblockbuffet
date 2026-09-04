@@ -1,4 +1,4 @@
-﻿import math
+import math
 from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,12 +11,12 @@ from app.schemas.bazaar import BazaarFlipItem
 
 async def calculate_bazaar_flips(
     db: AsyncSession,
-    min_profit: float = 500.0,
-    min_hourly_volume: int = 20,
+    min_profit: float = 0.0,
+    min_hourly_volume: int = 0,
     max_budget: Optional[float] = None,
     tax_rate: Optional[float] = None,
     market_share_alpha: float = 0.10,
-    limit: int = 100,
+    limit: Optional[int] = None,
 ) -> List[BazaarFlipItem]:
     """
     Bazaar Flipping Firsatlarini Hesaplar:
@@ -100,4 +100,4 @@ async def calculate_bazaar_flips(
 
     # En yuksek skora (veya saatlik kara) gore sirala
     flips.sort(key=lambda x: x.profit_per_hour, reverse=True)
-    return flips[:limit]
+    return flips[:limit] if limit is not None else flips
