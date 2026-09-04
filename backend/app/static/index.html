@@ -1,0 +1,499 @@
+﻿<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skyblock Buffet - Ekonomi & Flipping Analiz Aracı</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+            },
+            dark: {
+              800: '#1e293b',
+              850: '#172033',
+              900: '#0f172a',
+              950: '#090d16',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Nadirlik Renkleri (Skyblock Authentic) */
+    .tier-COMMON { color: #ffffff; }
+    .tier-UNCOMMON { color: #55ff55; }
+    .tier-RARE { color: #5555ff; }
+    .tier-EPIC { color: #aa00aa; }
+    .tier-LEGENDARY { color: #ffaa00; }
+    .tier-MYTHIC { color: #ff55ff; }
+    .tier-DIVINE { color: #55ffff; }
+    .tier-SPECIAL { color: #ff5555; }
+    .tier-VERY_SPECIAL { color: #ff5555; }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="bg-dark-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-emerald-500 selection:text-white">
+
+  <!-- TOPBAR -->
+  <header class="border-b border-slate-800 bg-dark-900/80 backdrop-blur sticky top-0 z-40 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+          <i data-lucide="gem" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
+            Skyblock Buffet
+          </h1>
+          <p class="text-xs text-slate-400">Hypixel Skyblock Canlı Pazar & Kar Motoru</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- Live Status -->
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          API Aktif (PostgreSQL 16)
+        </span>
+
+        <!-- Auto Refresh Timer -->
+        <div class="flex items-center gap-2 bg-dark-800 border border-slate-700 px-3 py-1.5 rounded-lg text-xs">
+          <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
+          <span class="text-slate-400">Yenileme:</span>
+          <span id="countdown" class="font-bold text-emerald-400">60s</span>
+        </div>
+
+        <!-- Manual Refresh Button -->
+        <button id="refreshBtn" onclick="loadActiveTab()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-md shadow-emerald-600/20">
+          <i id="refreshIcon" data-lucide="refresh-cw" class="w-4 h-4"></i>
+          <span>Yenile</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto px-6 py-6 flex-1 w-full flex flex-col gap-6">
+
+    <!-- NAVIGATION TABS -->
+    <div class="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
+      <button onclick="switchTab('bazaar')" id="tab-bazaar" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+        <i data-lucide="arrow-left-right" class="w-4 h-4"></i>
+        Bazaar Flipping
+      </button>
+      <button onclick="switchTab('craft')" id="tab-craft" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
+        <i data-lucide="hammer" class="w-4 h-4"></i>
+        Craft Flipping
+      </button>
+      <button onclick="switchTab('auction')" id="tab-auction" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
+        <i data-lucide="landmark" class="w-4 h-4"></i>
+        Auction House (AH / LBIN)
+      </button>
+    </div>
+
+    <!-- FILTER BAR -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 bg-dark-900 border border-slate-800 p-4 rounded-xl">
+      <!-- Search -->
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Eşya Ara</label>
+        <div class="relative">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-500"></i>
+          <input type="text" id="searchInput" oninput="filterCurrentData()" placeholder="Örn: Hyperion, Cookie, Diamond..." class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white placeholder-slate-500 transition" />
+        </div>
+      </div>
+
+      <!-- Max Budget -->
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Maksimum Bütçe (Coins)</label>
+        <div class="relative">
+          <i data-lucide="coins" class="w-4 h-4 absolute left-3 top-3 text-amber-400"></i>
+          <input type="number" id="budgetInput" placeholder="Limitsiz" class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white placeholder-slate-500 transition" />
+        </div>
+      </div>
+
+      <!-- Min Profit -->
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1">Minimum Net Kar (Coins)</label>
+        <div class="relative">
+          <i data-lucide="trending-up" class="w-4 h-4 absolute left-3 top-3 text-emerald-400"></i>
+          <input type="number" id="minProfitInput" value="1000" class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white transition" />
+        </div>
+      </div>
+
+      <!-- Apply Filter Button -->
+      <div class="flex items-end">
+        <button onclick="loadActiveTab()" class="w-full bg-dark-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-200 hover:text-white py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2">
+          <i data-lucide="filter" class="w-4 h-4"></i>
+          Filtreleri Uygula
+        </button>
+      </div>
+    </div>
+
+    <!-- METRICS OVERVIEW CARDS -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="bg-dark-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-400 font-medium">Bulunan Fırsat</p>
+          <p id="metric-count" class="text-2xl font-bold text-white mt-1">0</p>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+          <i data-lucide="activity" class="w-6 h-6"></i>
+        </div>
+      </div>
+
+      <div class="bg-dark-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-400 font-medium">En Yüksek Saatlik Kar (PPH)</p>
+          <p id="metric-max-pph" class="text-2xl font-bold text-emerald-400 mt-1">0 coins</p>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+          <i data-lucide="zap" class="w-6 h-6"></i>
+        </div>
+      </div>
+
+      <div class="bg-dark-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-400 font-medium">Ortalama Kar Marjı (ROI)</p>
+          <p id="metric-avg-roi" class="text-2xl font-bold text-amber-400 mt-1">%0.0</p>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+          <i data-lucide="percent" class="w-6 h-6"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- TABLE CONTAINER -->
+    <div class="bg-dark-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead id="table-head" class="bg-dark-850/80 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <!-- Dinamik doldurulur -->
+          </thead>
+          <tbody id="table-body" class="divide-y divide-slate-800/60 font-mono text-xs">
+            <!-- Dinamik doldurulur -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Loading State -->
+      <div id="loading" class="hidden py-16 flex flex-col items-center justify-center gap-3">
+        <i data-lucide="loader-2" class="w-8 h-8 text-emerald-400 animate-spin"></i>
+        <p class="text-sm text-slate-400">Piyasa verileri taranıyor ve kar marjları hesaplanıyor...</p>
+      </div>
+
+      <!-- Empty State -->
+      <div id="empty" class="hidden py-16 flex flex-col items-center justify-center gap-3">
+        <i data-lucide="inbox" class="w-8 h-8 text-slate-600"></i>
+        <p class="text-sm text-slate-500">Seçilen filtrelere uygun fırsat bulunamadı.</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- MODAL: RECIPE DETAIL -->
+  <div id="recipeModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-dark-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl flex flex-col gap-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 id="modalTitle" class="text-base font-bold text-white">Tarif Detayı</h3>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-dark-800 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div id="modalContent" class="flex flex-col gap-2 max-h-96 overflow-y-auto">
+        <!-- Reçete bilesenleri listelenir -->
+      </div>
+      <div class="border-t border-slate-800 pt-3 flex justify-between items-center text-xs">
+        <span class="text-slate-400">Toplam Hammadde Maliyeti:</span>
+        <span id="modalTotalCost" class="font-bold text-emerald-400 text-sm">0 coins</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 transform translate-y-20 opacity-0 transition duration-300 pointer-events-none">
+    <i data-lucide="check-circle" class="w-4 h-4"></i>
+    <span id="toastMsg" class="text-sm font-semibold">Kopyalandı!</span>
+  </div>
+
+  <script>
+    let currentTab = 'bazaar';
+    let rawData = [];
+    let countdown = 60;
+    let timerInterval = null;
+
+    function formatNumber(num) {
+      if (num === null || num === undefined) return '0';
+      return Math.round(num).toLocaleString('tr-TR');
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMsg');
+      toastMsg.innerText = msg;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 2500);
+    }
+
+    function copyToClipboard(text, customMsg) {
+      navigator.clipboard.writeText(text);
+      showToast(customMsg || `Panoya kopyalandı: ${text}`);
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
+        btn.classList.add('text-slate-400');
+      });
+      const activeBtn = document.getElementById(`tab-${tab}`);
+      activeBtn.classList.remove('text-slate-400');
+      activeBtn.classList.add('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
+      loadActiveTab();
+    }
+
+    async function loadActiveTab() {
+      const loading = document.getElementById('loading');
+      const empty = document.getElementById('empty');
+      const tbody = document.getElementById('table-body');
+      const thead = document.getElementById('table-head');
+      const refreshIcon = document.getElementById('refreshIcon');
+
+      refreshIcon.classList.add('animate-spin');
+      loading.classList.remove('hidden');
+      empty.classList.add('hidden');
+      tbody.innerHTML = '';
+
+      const minProfit = document.getElementById('minProfitInput').value || '1000';
+      const budget = document.getElementById('budgetInput').value;
+      let budgetParam = budget ? `&max_budget=${budget}` : '';
+
+      let url = '';
+      if (currentTab === 'bazaar') {
+        url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=100`;
+      } else if (currentTab === 'craft') {
+        url = `/api/v1/craft/flips?min_profit=${minProfit}${budgetParam}&limit=100`;
+      } else if (currentTab === 'auction') {
+        url = `/api/v1/auction/flips?min_profit=${minProfit || 100000}${budgetParam}&limit=50`;
+      }
+
+      try {
+        const res = await fetch(url);
+        rawData = await res.json();
+        renderTable(rawData);
+      } catch (err) {
+        console.error("Veri yukleme hatasi:", err);
+        showToast("Hata: Veriler yuklenemedi!");
+      } finally {
+        loading.classList.add('hidden');
+        refreshIcon.classList.remove('animate-spin');
+        resetCountdown();
+        lucide.createIcons();
+      }
+    }
+
+    function renderTable(data) {
+      const tbody = document.getElementById('table-body');
+      const thead = document.getElementById('table-head');
+      const empty = document.getElementById('empty');
+
+      if (!data || data.length === 0) {
+        empty.classList.remove('hidden');
+        updateMetrics(0, 0, 0);
+        return;
+      }
+      empty.classList.add('hidden');
+
+      let maxPPH = 0;
+      let sumROI = 0;
+
+      if (currentTab === 'bazaar') {
+        thead.innerHTML = `
+          <tr>
+            <th class="px-6 py-3.5">Eşya Adı</th>
+            <th class="px-6 py-3.5">Alış Emri (Buy Order)</th>
+            <th class="px-6 py-3.5">Satış Emri (Sell Offer)</th>
+            <th class="px-6 py-3.5 text-emerald-400">Net Kar / Adet</th>
+            <th class="px-6 py-3.5 text-amber-400">ROI %</th>
+            <th class="px-6 py-3.5">Saatlik Hacim</th>
+            <th class="px-6 py-3.5 text-cyan-400 font-bold">Saatlik Kar (PPH)</th>
+          </tr>
+        `;
+        tbody.innerHTML = data.map(item => {
+          maxPPH = Math.max(maxPPH, item.profit_per_hour);
+          sumROI += item.margin_percent;
+          return `
+            <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
+              <td class="px-6 py-3 font-sans font-medium text-slate-200">
+                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.name}</span>
+                <span class="block text-[10px] text-slate-500 font-mono">${item.item_id}</span>
+              </td>
+              <td class="px-6 py-3 text-slate-300">${formatNumber(item.buy_price)}</td>
+              <td class="px-6 py-3 text-slate-300">${formatNumber(item.sell_price)}</td>
+              <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.profit_per_item)}</td>
+              <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 text-slate-400">${formatNumber(item.hourly_volume)} /saat</td>
+              <td class="px-6 py-3 font-bold text-cyan-400 text-sm">${formatNumber(item.profit_per_hour)}</td>
+            </tr>
+          `;
+        }).join('');
+
+      } else if (currentTab === 'craft') {
+        thead.innerHTML = `
+          <tr>
+            <th class="px-6 py-3.5">Üretilen Eşya</th>
+            <th class="px-6 py-3.5">Hammadde Maliyeti</th>
+            <th class="px-6 py-3.5">Satış Değeri</th>
+            <th class="px-6 py-3.5 text-emerald-400">Craft Karı</th>
+            <th class="px-6 py-3.5 text-amber-400">ROI %</th>
+            <th class="px-6 py-3.5 text-cyan-400 font-bold">Saatlik Kar (PPH)</th>
+            <th class="px-6 py-3.5 text-center">Tarif</th>
+          </tr>
+        `;
+        tbody.innerHTML = data.map((item, idx) => {
+          maxPPH = Math.max(maxPPH, item.profit_per_hour);
+          sumROI += item.margin_percent;
+          return `
+            <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
+              <td class="px-6 py-3 font-sans font-medium text-slate-200">
+                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.result_name}</span>
+                <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id} (${item.result_quantity}x)</span>
+              </td>
+              <td class="px-6 py-3 text-slate-300">${formatNumber(item.material_cost)}</td>
+              <td class="px-6 py-3 text-slate-300">${formatNumber(item.sell_price)}</td>
+              <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.profit)}</td>
+              <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 font-bold text-cyan-400 text-sm">${formatNumber(item.profit_per_hour)}</td>
+              <td class="px-6 py-3 text-center">
+                <button onclick="openRecipeModal(${idx})" class="px-3 py-1.5 bg-dark-800 hover:bg-emerald-600/20 hover:text-emerald-400 border border-slate-700 hover:border-emerald-500/30 rounded-lg text-[11px] font-sans transition">
+                  Malzemeleri Gör
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } else if (currentTab === 'auction') {
+        thead.innerHTML = `
+          <tr>
+            <th class="px-6 py-3.5">Eşya Adı</th>
+            <th class="px-6 py-3.5">En Ucuz (LBIN)</th>
+            <th class="px-6 py-3.5">2. En Ucuz (2nd BIN)</th>
+            <th class="px-6 py-3.5 text-emerald-400">Tahmini Net Kar</th>
+            <th class="px-6 py-3.5 text-amber-400">ROI %</th>
+            <th class="px-6 py-3.5">İlan Sayısı</th>
+            <th class="px-6 py-3.5 text-center">Oyun İçi Komut</th>
+          </tr>
+        `;
+        tbody.innerHTML = data.map(item => {
+          maxPPH = Math.max(maxPPH, item.net_profit);
+          sumROI += item.margin_percent;
+          const cmd = `/viewauction ${item.auction_uuid}`;
+          return `
+            <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
+              <td class="px-6 py-3 font-sans font-medium text-slate-200">
+                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.item_name}</span>
+              </td>
+              <td class="px-6 py-3 text-emerald-300 font-bold">${formatNumber(item.lowest_bin)}</td>
+              <td class="px-6 py-3 text-slate-300">${formatNumber(item.second_lowest_bin)}</td>
+              <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.net_profit)}</td>
+              <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 text-slate-400">${item.total_listings} aktif</td>
+              <td class="px-6 py-3 text-center font-sans">
+                <button onclick="copyToClipboard('${cmd}', 'Komut Kopyalandı!')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition">
+                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                  Kopyala
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      updateMetrics(data.length, maxPPH, sumROI / data.length);
+      lucide.createIcons();
+    }
+
+    function updateMetrics(count, maxPPH, avgROI) {
+      document.getElementById('metric-count').innerText = count;
+      document.getElementById('metric-max-pph').innerText = formatNumber(maxPPH) + ' coins';
+      document.getElementById('metric-avg-roi').innerText = '%' + (avgROI || 0).toFixed(1);
+    }
+
+    function filterCurrentData() {
+      const search = document.getElementById('searchInput').value.toLowerCase();
+      if (!search) {
+        renderTable(rawData);
+        return;
+      }
+      const filtered = rawData.filter(item => {
+        const name = (item.name || item.result_name || item.item_name || '').toLowerCase();
+        const id = (item.item_id || item.result_item_id || '').toLowerCase();
+        return name.includes(search) || id.includes(search);
+      });
+      renderTable(filtered);
+    }
+
+    function openRecipeModal(idx) {
+      const item = rawData[idx];
+      if (!item) return;
+      document.getElementById('modalTitle').innerText = `${item.result_name} (${item.result_quantity}x) Tarifi`;
+      const container = document.getElementById('modalContent');
+      container.innerHTML = item.ingredients.map(ing => `
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-dark-800 border border-slate-700/60 text-xs">
+          <div>
+            <p class="font-bold text-slate-200">${ing.name}</p>
+            <p class="text-slate-400 text-[10px] font-mono">${ing.quantity}x @ ${formatNumber(ing.unit_cost)} coins</p>
+          </div>
+          <span class="font-bold text-amber-400 font-mono">${formatNumber(ing.total_cost)} coins</span>
+        </div>
+      `).join('');
+      document.getElementById('modalTotalCost').innerText = `${formatNumber(item.material_cost)} coins`;
+      document.getElementById('recipeModal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeModal() {
+      document.getElementById('recipeModal').classList.add('hidden');
+    }
+
+    function resetCountdown() {
+      countdown = 60;
+    }
+
+    // Timer Loop
+    timerInterval = setInterval(() => {
+      countdown--;
+      const el = document.getElementById('countdown');
+      if (el) el.innerText = countdown + 's';
+      if (countdown <= 0) {
+        loadActiveTab();
+      }
+    }, 1000);
+
+    // Initial Load
+    window.addEventListener('DOMContentLoaded', () => {
+      loadActiveTab();
+    });
+  </script>
+</body>
+</html>
