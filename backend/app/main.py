@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
@@ -17,10 +17,17 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 async def bazaar_background_updater():
-    """Arka planda her 90 saniyede bir Bazaar verilerini otomatik gunceller."""
+    """Arka planda her 15 saniyede bir Bazaar verilerini otomatik gunceller."""
+    # Sunucu acilir acilmaz ilk guncellemeyi hemen yap
+    try:
+        async with AsyncSessionLocal() as session:
+            await sync_bazaar_to_db(session)
+    except Exception as e:
+        print(f"Bazaar ilk acilis guncelleme hatasi: {e}")
+
     while True:
         try:
-            await asyncio.sleep(90)
+            await asyncio.sleep(15)
             async with AsyncSessionLocal() as session:
                 await sync_bazaar_to_db(session)
         except asyncio.CancelledError:

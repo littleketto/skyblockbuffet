@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="tr" class="dark">
 <head>
   <meta charset="UTF-8" />
@@ -77,11 +77,11 @@
         <div class="flex items-center gap-2 bg-dark-800 border border-slate-700 px-3 py-1.5 rounded-lg text-xs">
           <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
           <span class="text-slate-400">Yenileme:</span>
-          <span id="countdown" class="font-bold text-emerald-400">60s</span>
+          <span id="countdown" class="font-bold text-emerald-400">15s</span>
         </div>
 
         <!-- Manual Refresh Button -->
-        <button id="refreshBtn" onclick="loadActiveTab()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-md shadow-emerald-600/20">
+        <button id="refreshBtn" onclick="loadActiveTab(true)" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-md shadow-emerald-600/20">
           <i id="refreshIcon" data-lucide="refresh-cw" class="w-4 h-4"></i>
           <span>Yenile</span>
         </button>
@@ -313,7 +313,7 @@
       loadActiveTab();
     }
 
-    async function loadActiveTab() {
+    async function loadActiveTab(isManual = false) {
       const loading = document.getElementById('loading');
       const empty = document.getElementById('empty');
       const tbody = document.getElementById('table-body');
@@ -328,12 +328,13 @@
       const minProfit = document.getElementById('minProfitInput').value || '10000';
       const budget = document.getElementById('budgetInput').value;
       let budgetParam = budget ? `&max_budget=${budget}` : '';
+      let freshParam = isManual ? '&fresh=true' : '';
 
       let url = '';
       if (currentTab === 'bazaar') {
-        url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=100`;
+        url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=100${freshParam}`;
       } else if (currentTab === 'craft') {
-        url = `/api/v1/craft/smart-flips?market=${craftMarket}&min_profit=${minProfit}${budgetParam}&limit=60`;
+        url = `/api/v1/craft/smart-flips?market=${craftMarket}&min_profit=${minProfit}${budgetParam}&limit=60${freshParam}`;
       } else if (currentTab === 'auction') {
         url = `/api/v1/auction/flips?min_profit=${minProfit || 100000}${budgetParam}&limit=50`;
       }
@@ -589,7 +590,7 @@
     }
 
     function resetCountdown() {
-      countdown = 60;
+      countdown = 15;
     }
 
     timerInterval = setInterval(() => {
