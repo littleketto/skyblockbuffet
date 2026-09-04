@@ -1,4 +1,4 @@
-﻿import re
+import re
 import base64
 import gzip
 import asyncio
@@ -67,6 +67,11 @@ class AuctionService:
         if settings.HYPIXEL_API_KEY:
             self.headers["API-Key"] = settings.HYPIXEL_API_KEY
 
+        self._cached_flips: List[AHFlipItem] = []
+        self._last_fetch_time: float = 0.0
+        self._cache_lock = asyncio.Lock()
+        self.CACHE_TTL: float = 30.0  # 30 saniye boyunca hafızadaki tüm taranmış AH'yi kullan
+
     async def _fetch_page(self, client: httpx.AsyncClient, page: int, sem: asyncio.Semaphore) -> List[Dict[str, Any]]:
         async with sem:
             try:
@@ -82,7 +87,7 @@ class AuctionService:
     async def fetch_all_bin_auctions(self, max_concurrent: int = 15) -> List[Dict[str, Any]]:
         """Tum aktif BIN ilanlarini asenkron ve paralel olarak ceker."""
         sem = asyncio.Semaphore(max_concurrent)
-        limits = httpx.Limits(max_keepalive_connections=20, max_connections=30)
+        limits = httpx.Limits(max_keepalive_connections=25, max_connections=35)
 
         async with httpx.AsyncClient(limits=limits) as client:
             res = await client.get(f"{self.base_url}/skyblock/auctions?page=0", headers=self.headers, timeout=15.0)
@@ -101,144 +106,170 @@ class AuctionService:
 
     async def calculate_ah_flips(
         self,
-        min_profit: float = 100000.0,
-        min_margin: float = 15.0,
-        min_listings: int = 2,
-        max_price_ratio: float = 4.0,
+        min_profit: float = 0.0,
+        min_margin: float = 0.0,
+        min_listings: int = 1,
+        max_price_ratio: float = 50.0,
         max_budget: Optional[float] = None,
-        limit: int = 50,
+        limit: Optional[int] = None,
+        fresh: bool = False,
     ) -> List[AHFlipItem]:
         """
-        AH Sniping ve Gecmis Satis Analizi:
-        1. Aktif LBIN ve 2. LBIN'i karsilastirir.
-        2. NBT verisinden kesin item_id degerini cikarir.
-        3. Coflnet gecmis satis veritabanindan son 24 saatlik satis adedini (Volume)
-           ve ortalama satis fiyatini (Real Avg) ceker.
+        Auction House'taki tum esyalari kapsar:
+        1. 40.000+ aktif ilani tarar ve temiz esya isimlerine gore gruplar (5.600+ farkli esya).
+        2. Her esya icin En Ucuz (LBIN), 2. En Ucuz (2nd BIN), kar ve getiri oranini hesaplar.
+        3. En yuksek kar potansiyeline sahip ilk adaylarin 24s gercek satis gecmisini Coflnet ile zenginlestirir.
+        4. Tum sonuclari hafizada cache'leyerek aninda ve sayfali sekilde sunar.
         """
-        bin_auctions = await self.fetch_all_bin_auctions()
-        if not bin_auctions:
-            return []
+        import time
+        now = time.time()
 
-        # Isimlerine gore grupla
-        groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        for a in bin_auctions:
-            raw_name = a.get("item_name", "")
-            clean_name = clean_minecraft_text(raw_name)
-            if clean_name:
-                groups[clean_name].append(a)
-
-        candidates: List[Dict[str, Any]] = []
-
-        for name, auctions in groups.items():
-            if len(auctions) < min_listings:
-                continue
-
-            auctions.sort(key=lambda x: float(x.get("starting_bid", 0)))
-            lbin_auc = auctions[0]
-            second_auc = auctions[1]
-
-            lbin = float(lbin_auc.get("starting_bid", 0))
-            second_lbin = float(second_auc.get("starting_bid", 0))
-
-            if lbin <= 5000 or second_lbin <= lbin:
-                continue
-
-            if (second_lbin / lbin) > max_price_ratio:
-                continue
-
-            if max_budget is not None and lbin > max_budget:
-                continue
-
-            # NBT'den kesin item_id'yi cikar
-            nbt_id = extract_item_id_from_bytes(lbin_auc.get("item_bytes", ""))
-            if not nbt_id:
-                base_name = extract_base_item_name(name)
-                nbt_id = base_name.upper().replace(" ", "_").replace("'", "")
-
-            candidates.append({
-                "name": name,
-                "item_id": nbt_id,
-                "lbin": lbin,
-                "second_lbin": second_lbin,
-                "lbin_auc": lbin_auc,
-                "total_listings": len(auctions),
-            })
-
-        # Kar marjina gore ilk 30 adayi sec ve gecmis verilerini sorgula
-        candidates.sort(key=lambda x: (x["second_lbin"] - x["lbin"]), reverse=True)
-        top_candidates = candidates[:35]
-
-        # Paralel Coflnet gecmis sorgusu
-        history_tasks = [coflnet_service.get_item_history_24h(c["item_id"]) for c in top_candidates]
-        histories = await asyncio.gather(*history_tasks)
-
-        flips: List[AHFlipItem] = []
-
-        for c, history in zip(top_candidates, histories):
-            lbin = c["lbin"]
-            second_lbin = c["second_lbin"]
-
-            daily_vol = 0
-            avg_price = None
-            liquidity_status = "RISKLI"
-            risk_warning = None
-
-            if history:
-                daily_vol = history.get("daily_volume", 0)
-                avg_price = history.get("avg_price")
-
-                if daily_vol >= 15:
-                    liquidity_status = "YUKSEK"
-                elif daily_vol >= 3:
-                    liquidity_status = "ORTA"
-                else:
-                    liquidity_status = "RISKLI"
-                    risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi."
-
-                # Gercekci Satis Fiyati: 2. LBIN gercek ortalamanin %20 uzerindeyse ortalamaya gore hesapla
-                if avg_price and second_lbin > (avg_price * 1.20):
-                    target_sell_price = round(avg_price * 1.02, 0)
-                else:
-                    target_sell_price = round(second_lbin * 0.99, 0)
+        async with self._cache_lock:
+            if not fresh and self._cached_flips and (now - self._last_fetch_time) < self.CACHE_TTL:
+                all_items = self._cached_flips
             else:
-                target_sell_price = round(second_lbin * 0.99, 0)
-                daily_vol = 0
-                liquidity_status = "RISKLI"
-                risk_warning = "24 saatlik gecmis satis verisi bulunamadi."
+                bin_auctions = await self.fetch_all_bin_auctions()
+                if not bin_auctions:
+                    return self._cached_flips or []
 
-            # Net Kar: %2 AH kesintisi
-            net_revenue = target_sell_price * 0.98
-            profit = net_revenue - lbin
+                # Isimlerine gore grupla
+                groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+                for a in bin_auctions:
+                    raw_name = a.get("item_name", "")
+                    clean_name = clean_minecraft_text(raw_name)
+                    if clean_name:
+                        groups[clean_name].append(a)
 
-            if profit < min_profit:
+                processed_items: List[Dict[str, Any]] = []
+
+                for name, auctions in groups.items():
+                    if len(auctions) < min_listings:
+                        continue
+
+                    auctions.sort(key=lambda x: float(x.get("starting_bid", 0)))
+                    lbin_auc = auctions[0]
+                    lbin = float(lbin_auc.get("starting_bid", 0))
+
+                    if lbin <= 0:
+                        continue
+
+                    has_second = len(auctions) > 1
+                    second_auc = auctions[1] if has_second else lbin_auc
+                    second_lbin = float(second_auc.get("starting_bid", 0)) if has_second else lbin
+
+                    # NBT'den kesin item_id'yi cikar
+                    nbt_id = extract_item_id_from_bytes(lbin_auc.get("item_bytes", ""))
+                    if not nbt_id:
+                        base_name = extract_base_item_name(name)
+                        nbt_id = base_name.upper().replace(" ", "_").replace("'", "")
+
+                    # Hedef Satis Fiyati ve Kar
+                    if has_second and second_lbin > lbin:
+                        target_sell = round(second_lbin * 0.99, 0)
+                        # Net Gelir = Satis * 0.98 (%2 AH vergisi)
+                        net_revenue = target_sell * 0.98
+                        profit = round(net_revenue - lbin, 0)
+                        margin = round((profit / lbin) * 100.0, 1) if lbin > 0 else 0.0
+                    else:
+                        target_sell = lbin
+                        profit = 0.0
+                        margin = 0.0
+
+                    processed_items.append({
+                        "name": name,
+                        "item_id": nbt_id,
+                        "lbin": lbin,
+                        "second_lbin": second_lbin,
+                        "target_sell": target_sell,
+                        "profit": profit,
+                        "margin": margin,
+                        "lbin_auc": lbin_auc,
+                        "total_listings": len(auctions),
+                    })
+
+                # En yuksek kara gore sirala
+                processed_items.sort(key=lambda x: x["profit"], reverse=True)
+
+                # En yuksek karli ilk 40 esyanin gecmisini Coflnet'ten asenkron zenginlestir
+                top_slice = processed_items[:40]
+                history_tasks = [coflnet_service.get_item_history_24h(c["item_id"]) for c in top_slice]
+                histories = await asyncio.gather(*history_tasks)
+
+                enriched_flips: List[AHFlipItem] = []
+
+                for idx, c in enumerate(processed_items):
+                    history = histories[idx] if idx < len(histories) else None
+                    lbin = c["lbin"]
+                    second_lbin = c["second_lbin"]
+                    profit = c["profit"]
+                    margin = c["margin"]
+
+                    daily_vol = 0
+                    avg_price = None
+                    liquidity_status = "ORTA"
+                    risk_warning = None
+
+                    if history:
+                        daily_vol = history.get("daily_volume", 0)
+                        avg_price = history.get("avg_price")
+
+                        if daily_vol >= 15:
+                            liquidity_status = "YUKSEK"
+                        elif daily_vol >= 3:
+                            liquidity_status = "ORTA"
+                        else:
+                            liquidity_status = "RISKLI"
+                            risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi."
+
+                        # Eger 2. LBIN ortalamanin %25 ustundeyse gercek ortalamaya gore kar duzelt
+                        if avg_price and second_lbin > (avg_price * 1.25):
+                            target_sell_price = round(avg_price * 1.02, 0)
+                            profit = round((target_sell_price * 0.98) - lbin, 0)
+                            margin = round((profit / lbin) * 100.0, 1) if lbin > 0 else 0.0
+                    else:
+                        target_sell_price = c["target_sell"]
+                        if profit > 5000000 and (second_lbin / max(1.0, lbin)) > 4.0:
+                            liquidity_status = "RISKLI"
+                            risk_warning = "2. BIN ile aradaki fark cok yuksek, manipule ilan olabilir."
+
+                    enriched_flips.append(
+                        AHFlipItem(
+                            item_name=c["name"],
+                            item_id=c["item_id"],
+                            tier=c["lbin_auc"].get("tier"),
+                            category=c["lbin_auc"].get("category"),
+                            lowest_bin=round(lbin, 0),
+                            second_lowest_bin=round(second_lbin, 0),
+                            target_sell_price=round(target_sell_price, 0),
+                            net_profit=round(profit, 0),
+                            margin_percent=round(margin, 1),
+                            total_listings=c["total_listings"],
+                            auction_uuid=c["lbin_auc"].get("uuid", ""),
+                            daily_volume=daily_vol,
+                            avg_sold_price=avg_price,
+                            liquidity_status=liquidity_status,
+                            risk_warning=risk_warning,
+                        )
+                    )
+
+                # Nihai siralama: Once net kara gore sirala
+                enriched_flips.sort(key=lambda x: (x.net_profit, x.margin_percent), reverse=True)
+                self._cached_flips = enriched_flips
+                self._last_fetch_time = time.time()
+                all_items = self._cached_flips
+
+        # Filtreleme (Client istegine gore)
+        filtered = []
+        for item in all_items:
+            if max_budget is not None and item.lowest_bin > max_budget:
                 continue
-
-            margin_percent = (profit / lbin) * 100.0
-            if margin_percent < min_margin:
+            if min_profit > 0 and item.net_profit < min_profit:
                 continue
+            if min_margin > 0 and item.margin_percent < min_margin:
+                continue
+            filtered.append(item)
 
-            flips.append(
-                AHFlipItem(
-                    item_name=c["name"],
-                    item_id=c["item_id"],
-                    tier=c["lbin_auc"].get("tier"),
-                    category=c["lbin_auc"].get("category"),
-                    lowest_bin=round(lbin, 0),
-                    second_lowest_bin=round(second_lbin, 0),
-                    target_sell_price=round(target_sell_price, 0),
-                    net_profit=round(profit, 0),
-                    margin_percent=round(margin_percent, 1),
-                    total_listings=c["total_listings"],
-                    auction_uuid=c["lbin_auc"].get("uuid", ""),
-                    daily_volume=daily_vol,
-                    avg_sold_price=avg_price,
-                    liquidity_status=liquidity_status,
-                    risk_warning=risk_warning,
-                )
-            )
-
-        flips.sort(key=lambda x: x.net_profit, reverse=True)
-        return flips[:limit]
+        return filtered[:limit] if limit is not None else filtered
 
 
 auction_service = AuctionService()
