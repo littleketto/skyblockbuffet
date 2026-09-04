@@ -1,4 +1,4 @@
-﻿import re
+import re
 import asyncio
 from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
@@ -74,7 +74,15 @@ class SmartCraftEngine:
         print(f"Smart Craft: {len(ah_lbin_map)} farkli AH esyasi ve {len(bazaar_dict)} Bazaar urunu ile karar agaci cozuluyor...")
 
         # 5. Her esya icin "Buy vs Craft" Karar Fonksiyonu (Memoized / Recursive)
-        memo: Dict[str, Tuple[float, List[Dict[str, Any]], float]] = {}
+        memo: Dict[str, Tuple[Optional[float], List[Dict[str, Any]], float]] = {}
+
+        def is_raw_compactor(recipe: Recipe) -> bool:
+            """160 ham esya -> 1 enchantli esya gibi compactor tariflerini tespit eder."""
+            if len(recipe.ingredients) == 1:
+                ing = recipe.ingredients[0]
+                if ing.quantity >= 32 and not ing.item_id.startswith("ENCHANTED_"):
+                    return True
+            return False
 
         def resolve_cost(item_id: str, depth: int = 0) -> Tuple[Optional[float], List[Dict[str, Any]], float]:
             if item_id in memo:
@@ -99,23 +107,46 @@ class SmartCraftEngine:
             # Secenek 3: Craftlama Maliyeti
             craft_cost = None
             craft_substeps = []
-            if item_id in recipe_dict and depth < 3:
+            if item_id in recipe_dict and depth < 2:
                 r = recipe_dict[item_id][0]
-                possible_cost = 0.0
-                can_craft = True
-                temp_steps = []
+                # Eger bu esya tek bir ham maddeden olusan compactor esyasiysa (orn: 160 Flint -> Enchanted Flint)
+                # ve Bazaar'da satiliyorsa, ara urun olarak sifirdan yuzbinlerce ham madde alip craftlamak yerine
+                # dogrudan Bazaar'dan enchantli halini al.
+                if depth >= 1 and item_id in bazaar_dict and is_raw_compactor(r):
+                    pass
+                else:
+                    possible_cost = 0.0
+                    can_craft = True
+                    temp_steps = []
 
-                for ing in r.ingredients:
-                    ing_cost, sub_s, _ = resolve_cost(ing.item_id, depth + 1)
-                    if ing_cost is None or ing_cost <= 0:
-                        can_craft = False
-                        break
-                    possible_cost += ing_cost * ing.quantity
-                    temp_steps.extend(sub_s)
+                    for ing in r.ingredients:
+                        ing_cost, sub_s, sub_sav = resolve_cost(ing.item_id, depth + 1)
+                        if ing_cost is None or ing_cost <= 0:
+                            can_craft = False
+                            break
+                        possible_cost += ing_cost * ing.quantity
+                        for s in sub_s:
+                            temp_steps.append({
+                                "action": s["action"],
+                                "item_id": s["item_id"],
+                                "item_name": s["item_name"],
+                                "quantity": s["quantity"] * ing.quantity,
+                                "unit_price": s["unit_price"],
+                                "total_price": s["total_price"] * ing.quantity,
+                                "note": s.get("note"),
+                                "is_intermediate_craft": s.get("is_intermediate_craft", False),
+                                "savings_total": s.get("savings_total", 0.0) * ing.quantity,
+                            })
 
-                if can_craft and possible_cost > 0:
-                    craft_cost = possible_cost / r.result_quantity
-                    craft_substeps = temp_steps
+                    if can_craft and possible_cost > 0:
+                        yield_qty = r.result_quantity or 1
+                        craft_cost = possible_cost / yield_qty
+                        if yield_qty != 1:
+                            for s in temp_steps:
+                                s["quantity"] = s["quantity"] / yield_qty
+                                s["total_price"] = s["total_price"] / yield_qty
+                                s["savings_total"] = s["savings_total"] / yield_qty
+                        craft_substeps = temp_steps
 
             # En ucuz secenegi belirle
             market_cost = None
@@ -140,10 +171,10 @@ class SmartCraftEngine:
             steps = []
 
             if craft_cost is not None and market_cost is not None and depth > 0:
-                if market_cost < craft_cost:
+                if market_cost <= craft_cost:
                     best_cost = market_cost
                     savings = craft_cost - market_cost
-                    note = f"💡 Hazir satin almak, sifirdan craftlamaktan {round(savings):,} coins daha ucuz!"
+                    note = f"💡 Hazır satın almak, sıfırdan craftlamaktan {round(savings):,} coins daha ucuz!"
                     steps = [{
                         "action": market_type,
                         "item_id": item_id,
@@ -152,9 +183,12 @@ class SmartCraftEngine:
                         "unit_price": market_cost,
                         "total_price": market_cost,
                         "note": note,
+                        "is_intermediate_craft": False,
+                        "savings_total": savings,
                     }]
                 else:
                     best_cost = craft_cost
+                    savings = market_cost - craft_cost
                     steps = craft_substeps + [{
                         "action": "CRAFT",
                         "item_id": item_id,
@@ -162,7 +196,9 @@ class SmartCraftEngine:
                         "quantity": 1,
                         "unit_price": craft_cost,
                         "total_price": craft_cost,
-                        "note": "Crafting Table ile uret",
+                        "note": None,
+                        "is_intermediate_craft": True,
+                        "savings_total": savings,
                     }]
             elif craft_cost is not None and depth > 0:
                 best_cost = craft_cost
@@ -173,7 +209,9 @@ class SmartCraftEngine:
                     "quantity": 1,
                     "unit_price": craft_cost,
                     "total_price": craft_cost,
-                    "note": "Crafting Table ile uret",
+                    "note": None,
+                    "is_intermediate_craft": True,
+                    "savings_total": 0.0,
                 }]
             elif market_cost is not None:
                 best_cost = market_cost
@@ -185,6 +223,8 @@ class SmartCraftEngine:
                     "unit_price": market_cost,
                     "total_price": market_cost,
                     "note": None,
+                    "is_intermediate_craft": False,
+                    "savings_total": 0.0,
                 }]
 
             memo[item_id] = (best_cost, steps, savings)
@@ -204,13 +244,24 @@ class SmartCraftEngine:
             possible = True
 
             for ing in r.ingredients:
-                ing_cost, sub_s, sav = resolve_cost(ing.item_id, depth=1)
+                ing_cost, sub_s, sub_sav = resolve_cost(ing.item_id, depth=1)
                 if ing_cost is None or ing_cost <= 0:
                     possible = False
                     break
                 total_cost += ing_cost * ing.quantity
-                total_savings += sav * ing.quantity
-                raw_steps.extend(sub_s)
+                total_savings += sub_sav * ing.quantity
+                for s in sub_s:
+                    raw_steps.append({
+                        "action": s["action"],
+                        "item_id": s["item_id"],
+                        "item_name": s["item_name"],
+                        "quantity": s["quantity"] * ing.quantity,
+                        "unit_price": s["unit_price"],
+                        "total_price": s["total_price"] * ing.quantity,
+                        "note": s.get("note"),
+                        "is_intermediate_craft": s.get("is_intermediate_craft", False),
+                        "savings_total": s.get("savings_total", 0.0) * ing.quantity,
+                    })
 
             if not possible or total_cost <= 0:
                 continue
@@ -273,8 +324,8 @@ class SmartCraftEngine:
                 formatted_steps: List[SmartCraftStep] = []
                 step_no = 1
 
-                # Adimlari birlestir
-                buy_groups = defaultdict(lambda: {"qty": 0, "total": 0.0, "action": "", "name": "", "notes": []})
+                # 1. Alis adimlari (Bazaar / AH Buy)
+                buy_groups = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "action": "", "name": "", "notes": []})
                 for s in raw_steps:
                     if s["action"].startswith("BUY"):
                         k = (s["item_id"], s["action"])
@@ -282,18 +333,19 @@ class SmartCraftEngine:
                         buy_groups[k]["total"] += s["total_price"]
                         buy_groups[k]["action"] = s["action"]
                         buy_groups[k]["name"] = s["item_name"]
-                        if s["note"]:
+                        if s.get("note"):
                             buy_groups[k]["notes"].append(s["note"])
 
                 for k, bg in buy_groups.items():
-                    unit_p = bg["total"] / max(1, bg["qty"])
+                    qty = int(round(bg["qty"]))
+                    unit_p = bg["total"] / max(1, qty)
                     formatted_steps.append(
                         SmartCraftStep(
                             step_number=step_no,
                             action_type=bg["action"],
                             item_name=bg["name"],
                             item_id=k[0],
-                            quantity=bg["qty"],
+                            quantity=qty,
                             unit_price=round(unit_p, 1),
                             total_price=round(bg["total"], 1),
                             note=" | ".join(set(bg["notes"])) if bg["notes"] else None,
@@ -301,7 +353,37 @@ class SmartCraftEngine:
                     )
                     step_no += 1
 
-                # Craft Adimi
+                # 2. Ara Craft Adimlari (Orn: 102x Tarantula Silk uret)
+                intermediate_crafts = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "name": "", "savings": 0.0})
+                for s in raw_steps:
+                    if s["action"] == "CRAFT" and s.get("is_intermediate_craft"):
+                        k = s["item_id"]
+                        intermediate_crafts[k]["qty"] += s["quantity"]
+                        intermediate_crafts[k]["total"] += s["total_price"]
+                        intermediate_crafts[k]["name"] = s["item_name"]
+                        intermediate_crafts[k]["savings"] += s.get("savings_total", 0.0)
+
+                for item_id, ic in intermediate_crafts.items():
+                    qty = int(round(ic["qty"]))
+                    unit_p = ic["total"] / max(1, qty)
+                    note_txt = f"Crafting Table'da {qty}x {ic['name']} uret"
+                    if ic["savings"] > 0:
+                        note_txt += f" (💡 Sifirdan craftlamak, hazir almaktan {round(ic['savings']):,} coins daha ucuz!)"
+                    formatted_steps.append(
+                        SmartCraftStep(
+                            step_number=step_no,
+                            action_type="CRAFT",
+                            item_name=ic["name"],
+                            item_id=item_id,
+                            quantity=qty,
+                            unit_price=round(unit_p, 1),
+                            total_price=round(ic["total"], 1),
+                            note=note_txt,
+                        )
+                    )
+                    step_no += 1
+
+                # 3. Nihai Hedef Craft Adimi (Orn: 1x Flycatcher uret)
                 formatted_steps.append(
                     SmartCraftStep(
                         step_number=step_no,
@@ -316,7 +398,7 @@ class SmartCraftEngine:
                 )
                 step_no += 1
 
-                # Satis Adimi
+                # 4. Satis Adimi (AH veya Bazaar)
                 formatted_steps.append(
                     SmartCraftStep(
                         step_number=step_no,
