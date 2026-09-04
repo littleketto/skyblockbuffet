@@ -34,3 +34,16 @@ async def get_bazaar_flips(
         max_budget=max_budget,
         limit=limit,
     )
+
+
+@router.get("/history/{item_id}")
+async def get_bazaar_item_history(item_id: str):
+    """
+    Belirli bir Bazaar urununun son 24 saat ve son 7 gunluk
+    ortalama Insta-Buy ve Insta-Sell fiyat istatistiklerini getirir.
+    """
+    from app.services.coflnet_service import coflnet_service
+    history = await coflnet_service.get_bazaar_history(item_id)
+    if not history:
+        return {"item_id": item_id, "error": "Geçmiş veri bulunamadı"}
+    return history

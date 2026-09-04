@@ -83,6 +83,11 @@ async def calculate_bazaar_flips(
             # Dengeli Siralama Puani (Ranking Score)
             score = profit_per_hour * math.log10(max(10, hourly_volume))
 
+        weekly_buy = int(snapshot.buy_moving_week)
+        weekly_sell = int(snapshot.sell_moving_week)
+        daily_buy = int(weekly_buy / 7)
+        daily_sell = int(weekly_sell / 7)
+
         flips.append(
             BazaarFlipItem(
                 item_id=item.id,
@@ -93,8 +98,11 @@ async def calculate_bazaar_flips(
                 sell_price=round(sell_price, 2),
                 profit_per_item=round(profit_per_item, 2),
                 margin_percent=round(margin_percent, 2),
-                weekly_buy_volume=int(snapshot.buy_moving_week),
-                weekly_sell_volume=int(snapshot.sell_moving_week),
+                weekly_buy_volume=weekly_buy,
+                weekly_sell_volume=weekly_sell,
+                weekly_volume=weekly_sell,
+                daily_buy_volume=daily_buy,
+                daily_sell_volume=daily_sell,
                 hourly_volume=hourly_volume,
                 profit_per_hour=round(profit_per_hour, 2),
                 ranking_score=round(score, 2),

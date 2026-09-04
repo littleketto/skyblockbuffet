@@ -1,4 +1,4 @@
-﻿from typing import Optional
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -16,8 +16,11 @@ class BazaarFlipItem(BaseModel):
     profit_per_item: float = Field(..., description="Vergi dusulmus net kar (adet basi)")
     margin_percent: float = Field(..., description="Yatirim getirisi (ROI %)")
 
-    weekly_buy_volume: int = Field(..., description="Haftalik aninda alis hacmi")
-    weekly_sell_volume: int = Field(..., description="Haftalik aninda satis hacmi")
+    weekly_buy_volume: int = Field(..., description="Haftalik aninda alis hacmi (Insta-Buy)")
+    weekly_sell_volume: int = Field(..., description="Haftalik aninda satis hacmi (Insta-Sell)")
+    weekly_volume: int = Field(0, description="Haftalik toplam satis hacmi")
+    daily_buy_volume: int = Field(0, description="Son 24 saat tahmini alis hacmi")
+    daily_sell_volume: int = Field(0, description="Son 24 saat tahmini satis hacmi")
     hourly_volume: int = Field(..., description="Saatlik ortalama pazar hacmi")
     profit_per_hour: float = Field(..., description="Saatlik tahmini net kar (PPH)")
     ranking_score: float = Field(..., description="Likidite ve kar dengesine gore puan")

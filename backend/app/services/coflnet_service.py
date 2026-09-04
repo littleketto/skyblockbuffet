@@ -1,4 +1,4 @@
-﻿import time
+import time
 import httpx
 from typing import Dict, Any, Optional
 
@@ -63,6 +63,69 @@ class CoflnetService:
             pass
 
         return None
+
+    async def get_bazaar_history(self, item_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Bir Bazaar esyasinin son 24 saat ve son 1 haftalik Insta-Buy / Insta-Sell
+        fiyat ortalamalarini ve grafik noktalarini Coflnet'ten ceker.
+        """
+        if not item_id:
+            return None
+
+        now = time.time()
+        cache_key = f"bazaar_hist_{item_id}"
+        cached = _cache.get(cache_key)
+        if cached and (now - cached["timestamp"]) < CACHE_TTL:
+            return cached["data"]
+
+        headers = {"User-Agent": "SkyblockBuffet-Analyzer/1.0"}
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            try:
+                # Son 24 saatlik veriler
+                res_day = await client.get(f"https://sky.coflnet.com/api/bazaar/{item_id}/history/day", headers=headers)
+                day_data = res_day.json() if res_day.status_code == 200 else []
+
+                # Son 7 gunluk veriler
+                res_week = await client.get(f"https://sky.coflnet.com/api/bazaar/{item_id}/history/week", headers=headers)
+                week_data = res_week.json() if res_week.status_code == 200 else []
+
+                # 24s ortalamalari
+                buy_24h = [x["buy"] for x in day_data if x.get("buy")]
+                sell_24h = [x["sell"] for x in day_data if x.get("sell")]
+                avg_buy_24h = round(sum(buy_24h) / len(buy_24h), 1) if buy_24h else None
+                avg_sell_24h = round(sum(sell_24h) / len(sell_24h), 1) if sell_24h else None
+
+                # 7g ortalamalari
+                buy_7d = [x["buy"] for x in week_data if x.get("buy")]
+                sell_7d = [x["sell"] for x in week_data if x.get("sell")]
+                avg_buy_7d = round(sum(buy_7d) / len(buy_7d), 1) if buy_7d else None
+                avg_sell_7d = round(sum(sell_7d) / len(sell_7d), 1) if sell_7d else None
+
+                # 24s grafik noktalari (Zaman sirasina gore: eskiden yeniye dogru)
+                # day_data yeninden eskiye siralidir, ters cevirip ornekleyelim
+                chronological_points = list(reversed(day_data))
+                # Maksimum 35 nokta goster (grafik sade ve anlasilir olsun)
+                step = max(1, len(chronological_points) // 35)
+                sampled_points = chronological_points[::step]
+
+                result = {
+                    "item_id": item_id,
+                    "avg_buy_24h": avg_buy_24h,     # 24s Insta-Buy (Sell Offer) ortalamasi
+                    "avg_sell_24h": avg_sell_24h,   # 24s Insta-Sell (Buy Order) ortalamasi
+                    "min_buy_24h": min(buy_24h) if buy_24h else None,
+                    "max_buy_24h": max(buy_24h) if buy_24h else None,
+                    "min_sell_24h": min(sell_24h) if sell_24h else None,
+                    "max_sell_24h": max(sell_24h) if sell_24h else None,
+                    "avg_buy_7d": avg_buy_7d,       # 7 Gunluk Insta-Buy ortalamasi
+                    "avg_sell_7d": avg_sell_7d,     # 7 Gunluk Insta-Sell ortalamasi
+                    "points_24h": [{"t": x.get("timestamp"), "buy": x.get("buy"), "sell": x.get("sell")} for x in sampled_points],
+                }
+
+                _cache[cache_key] = {"timestamp": now, "data": result}
+                return result
+            except Exception as e:
+                print(f"Coflnet bazaar history hatasi ({item_id}):", e)
+                return None
 
 
 coflnet_service = CoflnetService()
