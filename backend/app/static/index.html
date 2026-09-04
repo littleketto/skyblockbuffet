@@ -73,11 +73,16 @@
           Docker & PostgreSQL Canlı
         </span>
 
-        <!-- Auto Refresh Timer -->
+        <!-- Auto Refresh Timer & Pause/Play Control -->
         <div class="flex items-center gap-2 bg-dark-800 border border-slate-700 px-3 py-1.5 rounded-lg text-xs">
           <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
           <span class="text-slate-400">Yenileme:</span>
-          <span id="countdown" class="font-bold text-emerald-400">15s</span>
+          <span id="countdown" class="font-bold text-emerald-400 font-mono min-w-[28px]">30s</span>
+          <!-- Pause/Resume Button -->
+          <button id="pauseToggleBtn" onclick="toggleAutoRefresh()" title="Otomatik yenilemeyi durdur / başlat" class="ml-1 px-1.5 py-0.5 hover:bg-dark-900 border border-slate-700/60 rounded text-slate-300 hover:text-white transition flex items-center gap-1 active:scale-95">
+            <i id="pauseIcon" data-lucide="pause" class="w-3 h-3"></i>
+            <span id="pauseText" class="text-[11px] font-medium hidden sm:inline">Durdur</span>
+          </button>
         </div>
 
         <!-- Manual Refresh Button -->
@@ -258,8 +263,38 @@
     let currentTab = 'bazaar';
     let craftMarket = 'all';
     let rawData = [];
-    let countdown = 60;
+    const REFRESH_INTERVAL = 30;
+    let countdown = REFRESH_INTERVAL;
+    let isAutoRefreshPaused = false;
     let timerInterval = null;
+
+    function toggleAutoRefresh() {
+      isAutoRefreshPaused = !isAutoRefreshPaused;
+      const pauseIcon = document.getElementById('pauseIcon');
+      const pauseText = document.getElementById('pauseText');
+      const countdownEl = document.getElementById('countdown');
+      const pauseBtn = document.getElementById('pauseToggleBtn');
+
+      if (isAutoRefreshPaused) {
+        countdownEl.innerText = 'Durduruldu';
+        countdownEl.classList.remove('text-emerald-400');
+        countdownEl.classList.add('text-amber-400');
+        pauseIcon.setAttribute('data-lucide', 'play');
+        if (pauseText) pauseText.innerText = 'Başlat';
+        pauseBtn.classList.add('text-amber-400', 'border-amber-500/40');
+        showToast('Otomatik yenileme durduruldu.');
+      } else {
+        countdown = REFRESH_INTERVAL;
+        countdownEl.innerText = countdown + 's';
+        countdownEl.classList.remove('text-amber-400');
+        countdownEl.classList.add('text-emerald-400');
+        pauseIcon.setAttribute('data-lucide', 'pause');
+        if (pauseText) pauseText.innerText = 'Durdur';
+        pauseBtn.classList.remove('text-amber-400', 'border-amber-500/40');
+        showToast('Otomatik yenileme başlatıldı (30s).');
+      }
+      lucide.createIcons();
+    }
 
     function formatNumber(num) {
       if (num === null || num === undefined) return '0';
@@ -321,9 +356,16 @@
       const refreshIcon = document.getElementById('refreshIcon');
 
       refreshIcon.classList.add('animate-spin');
-      loading.classList.remove('hidden');
-      empty.classList.add('hidden');
-      tbody.innerHTML = '';
+
+      // SADECE manuel tiklamada veya ilk bos yuklemede tabloyu sil ve loading goster.
+      // Otomatik arka plan yenilemesinde kullaniciyi rahatsiz etmemek icin tablo ekranda kalir,
+      // veriler gelince akici sekilde guncellenir.
+      const isInitialOrManual = isManual || !rawData || rawData.length === 0;
+      if (isInitialOrManual) {
+        loading.classList.remove('hidden');
+        empty.classList.add('hidden');
+        tbody.innerHTML = '';
+      }
 
       const minProfit = document.getElementById('minProfitInput').value || '10000';
       const budget = document.getElementById('budgetInput').value;
@@ -345,9 +387,11 @@
         renderTable(rawData);
       } catch (err) {
         console.error("Veri yukleme hatasi:", err);
-        showToast("Hata: Veriler yuklenemedi!");
+        if (isManual) showToast("Hata: Veriler yuklenemedi!");
       } finally {
-        loading.classList.add('hidden');
+        if (isInitialOrManual) {
+          loading.classList.add('hidden');
+        }
         refreshIcon.classList.remove('animate-spin');
         resetCountdown();
         lucide.createIcons();
@@ -590,20 +634,27 @@
     }
 
     function resetCountdown() {
-      countdown = 15;
+      countdown = REFRESH_INTERVAL;
+      const el = document.getElementById('countdown');
+      if (el && !isAutoRefreshPaused) {
+        el.innerText = countdown + 's';
+      }
     }
 
     timerInterval = setInterval(() => {
+      if (isAutoRefreshPaused) return;
+
       countdown--;
       const el = document.getElementById('countdown');
       if (el) el.innerText = countdown + 's';
       if (countdown <= 0) {
-        loadActiveTab();
+        resetCountdown();
+        loadActiveTab(false);
       }
     }, 1000);
 
     window.addEventListener('DOMContentLoaded', () => {
-      loadActiveTab();
+      loadActiveTab(true);
     });
   </script>
 </body>

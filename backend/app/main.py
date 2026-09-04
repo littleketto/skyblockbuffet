@@ -17,7 +17,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 async def bazaar_background_updater():
-    """Arka planda her 15 saniyede bir Bazaar verilerini otomatik gunceller."""
+    """Arka planda her 30 saniyede bir Bazaar verilerini otomatik gunceller."""
     # Sunucu acilir acilmaz ilk guncellemeyi hemen yap
     try:
         async with AsyncSessionLocal() as session:
@@ -27,7 +27,7 @@ async def bazaar_background_updater():
 
     while True:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(30)
             async with AsyncSessionLocal() as session:
                 await sync_bazaar_to_db(session)
         except asyncio.CancelledError:
