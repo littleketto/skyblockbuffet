@@ -63,7 +63,7 @@
           <h1 class="text-xl font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
             Skyblock Buffet
           </h1>
-          <p class="text-xs text-slate-400">Hypixel Skyblock Canlı Pazar & Kar Motoru</p>
+          <p class="text-xs text-slate-400">Hypixel Skyblock Canlı Pazar, Craft & AH Sniping Motoru</p>
         </div>
       </div>
 
@@ -71,7 +71,7 @@
         <!-- Live Status -->
         <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          API Aktif (PostgreSQL 16)
+          Docker & PostgreSQL Canlı
         </span>
 
         <!-- Auto Refresh Timer -->
@@ -105,7 +105,7 @@
       </button>
       <button onclick="switchTab('auction')" id="tab-auction" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
         <i data-lucide="landmark" class="w-4 h-4"></i>
-        Auction House (AH / LBIN)
+        Auction House (AH / LBIN & Geçmiş Satışlar)
       </button>
     </div>
 
@@ -161,7 +161,7 @@
 
       <div class="bg-dark-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
         <div>
-          <p class="text-xs text-slate-400 font-medium">En Yüksek Saatlik Kar (PPH)</p>
+          <p class="text-xs text-slate-400 font-medium">En Yüksek Kar</p>
           <p id="metric-max-pph" class="text-2xl font-bold text-emerald-400 mt-1">0 coins</p>
         </div>
         <div class="w-12 h-12 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
@@ -196,7 +196,7 @@
       <!-- Loading State -->
       <div id="loading" class="hidden py-16 flex flex-col items-center justify-center gap-3">
         <i data-lucide="loader-2" class="w-8 h-8 text-emerald-400 animate-spin"></i>
-        <p class="text-sm text-slate-400">Piyasa verileri taranıyor ve kar marjları hesaplanıyor...</p>
+        <p class="text-sm text-slate-400">Piyasa verileri ve satış geçmişleri analiz ediliyor...</p>
       </div>
 
       <!-- Empty State -->
@@ -217,9 +217,7 @@
           <i data-lucide="x" class="w-5 h-5"></i>
         </button>
       </div>
-      <div id="modalContent" class="flex flex-col gap-2 max-h-96 overflow-y-auto">
-        <!-- Reçete bilesenleri listelenir -->
-      </div>
+      <div id="modalContent" class="flex flex-col gap-2 max-h-96 overflow-y-auto"></div>
       <div class="border-t border-slate-800 pt-3 flex justify-between items-center text-xs">
         <span class="text-slate-400">Toplam Hammadde Maliyeti:</span>
         <span id="modalTotalCost" class="font-bold text-emerald-400 text-sm">0 coins</span>
@@ -398,9 +396,10 @@
             <th class="px-6 py-3.5">Eşya Adı</th>
             <th class="px-6 py-3.5">En Ucuz (LBIN)</th>
             <th class="px-6 py-3.5">2. En Ucuz (2nd BIN)</th>
+            <th class="px-6 py-3.5 text-slate-300">24s Ortalama Satış</th>
+            <th class="px-6 py-3.5 text-center">24s Hacim</th>
             <th class="px-6 py-3.5 text-emerald-400">Tahmini Net Kar</th>
             <th class="px-6 py-3.5 text-amber-400">ROI %</th>
-            <th class="px-6 py-3.5">İlan Sayısı</th>
             <th class="px-6 py-3.5 text-center">Oyun İçi Komut</th>
           </tr>
         `;
@@ -408,16 +407,35 @@
           maxPPH = Math.max(maxPPH, item.net_profit);
           sumROI += item.margin_percent;
           const cmd = `/viewauction ${item.auction_uuid}`;
+
+          let badgeClass = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+          let badgeText = "Orta";
+          if (item.liquidity_status === 'YUKSEK') {
+            badgeClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+            badgeText = "Yüksek";
+          } else if (item.liquidity_status === 'RISKLI') {
+            badgeClass = "bg-rose-500/10 text-rose-400 border-rose-500/20";
+            badgeText = "Riskli";
+          }
+
           return `
             <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
               <td class="px-6 py-3 font-sans font-medium text-slate-200">
                 <span class="tier-${item.tier || 'COMMON'} font-bold">${item.item_name}</span>
+                ${item.risk_warning ? `<span class="block text-[10px] text-rose-400">⚠️ ${item.risk_warning}</span>` : ''}
               </td>
               <td class="px-6 py-3 text-emerald-300 font-bold">${formatNumber(item.lowest_bin)}</td>
               <td class="px-6 py-3 text-slate-300">${formatNumber(item.second_lowest_bin)}</td>
+              <td class="px-6 py-3 text-slate-300 font-bold">
+                ${item.avg_sold_price ? formatNumber(item.avg_sold_price) + ' coins' : '<span class="text-slate-500 text-xs">Bilinmiyor</span>'}
+              </td>
+              <td class="px-6 py-3 text-center">
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-sans font-semibold border ${badgeClass}">
+                  ${item.daily_volume > 0 ? item.daily_volume + ' satış' : badgeText}
+                </span>
+              </td>
               <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.net_profit)}</td>
               <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
-              <td class="px-6 py-3 text-slate-400">${item.total_listings} aktif</td>
               <td class="px-6 py-3 text-center font-sans">
                 <button onclick="copyToClipboard('${cmd}', 'Komut Kopyalandı!')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition">
                   <i data-lucide="copy" class="w-3.5 h-3.5"></i>
@@ -480,7 +498,6 @@
       countdown = 60;
     }
 
-    // Timer Loop
     timerInterval = setInterval(() => {
       countdown--;
       const el = document.getElementById('countdown');
@@ -490,7 +507,6 @@
       }
     }, 1000);
 
-    // Initial Load
     window.addEventListener('DOMContentLoaded', () => {
       loadActiveTab();
     });

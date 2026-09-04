@@ -6,26 +6,38 @@ from typing import List, Dict, Any, Optional
 
 from app.core.config import settings
 from app.schemas.auction import AHFlipItem
+from app.services.coflnet_service import coflnet_service
+
+REFORGES = [
+    "Fierce", "Spicy", "Heroic", "Withered", "Necrotic", "Clean", "Fast",
+    "Ancient", "Giant", "Loving", "Wise", "Renowned", "Submerged", "Jaded",
+    "Hyper", "Grand", "Odd", "Sharp", "Heavy", "Titanic", "Dirty", "Shimmer"
+]
 
 
 def clean_minecraft_text(text: str) -> str:
-    """Minecraft renk ve format kodlarini (§a, §c vb.) ve ASCII disi sembolleri temizler."""
+    """Minecraft renk ve format kodlarini temizler."""
     if not text:
         return ""
-    # 1. Minecraft renk kodlarini kaldir (§a, §e, §l vb.)
     clean = re.sub(r"§[0-9a-fk-or]", "", text)
-    # 2. Yildiz (✪) gibi ozel karakterleri standart yıldıza cevir veya temizle
     clean = clean.replace("✪", "*")
-    # 3. Kalan ASCII disi ozel karakterleri temizle
     clean = clean.encode("ascii", "ignore").decode("ascii")
     return clean.strip()
 
 
+def extract_base_item_name(name: str) -> str:
+    """Reforgelari ve yıldızları ayıklayarak saf eşya adını bulur."""
+    clean = re.sub(r"[\*\✪\§]+", "", name).strip()
+    for r in REFORGES:
+        if clean.lower().startswith(r.lower() + " "):
+            clean = clean[len(r) + 1 :].strip()
+            break
+    return clean
+
+
 class AuctionService:
     """
-    Hypixel Auction House (AH) Tarayicisi ve Sniping / Flipping Motoru
-    Tum aktif muzayede sayfalarini paralel (asenkron) olarak saniyeler icinde tarar,
-    Lowest BIN (LBIN) firsatlarini yakalar.
+    Hypixel Auction House (AH) Tarayicisi ve Gecmis Satis Destekli Sniping Motoru
     """
 
     def __init__(self):
@@ -47,10 +59,7 @@ class AuctionService:
             return []
 
     async def fetch_all_bin_auctions(self, max_concurrent: int = 15) -> List[Dict[str, Any]]:
-        """
-        Tum sayfali aktif muzayedeleri paralel olarak ceker ve sadece BIN (Buy It Now) olanlari suzer.
-        """
-        print("Auction House: Sayfa 0 taranarak toplam sayfa adedi ogreniliyor...")
+        """Tum aktif BIN ilanlarini asenkron ve paralel olarak ceker."""
         sem = asyncio.Semaphore(max_concurrent)
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=30)
 
@@ -61,38 +70,35 @@ class AuctionService:
             total_pages = data.get("totalPages", 1)
             all_auctions = data.get("auctions", [])
 
-            print(f"Auction House: Toplam {total_pages} sayfa ({data.get('totalAuctions')} ilan) bulundu. Paralel taranıyor...")
-
             tasks = [self._fetch_page(client, p, sem) for p in range(1, total_pages)]
             results = await asyncio.gather(*tasks)
 
             for page_auctions in results:
                 all_auctions.extend(page_auctions)
 
-            bin_auctions = [a for a in all_auctions if a.get("bin", False)]
-            print(f"Auction House: Toplam {len(bin_auctions)} adet BIN ilani analiz icin hazir.")
-            return bin_auctions
+            return [a for a in all_auctions if a.get("bin", False)]
 
     async def calculate_ah_flips(
         self,
         min_profit: float = 100000.0,
         min_margin: float = 15.0,
-        min_listings: int = 3,
-        max_price_ratio: float = 4.0, # 2. LBIN fiyatinin 1. LBIN'e orani max 4x olmali
+        min_listings: int = 2,
+        max_price_ratio: float = 4.0,
         max_budget: Optional[float] = None,
         limit: int = 50,
     ) -> List[AHFlipItem]:
         """
-        AH Sniping / Flipping Hesaplayicisi:
-        1. Esyalari isimlerine gore gruplar.
-        2. Fiyatlari kucukten buyuge siralar (1. LBIN vs 2. LBIN).
-        3. Fiyat manipülasyonunu engellemek icin ilan sayisi ve fiyat artis oranini filtreler.
-        4. %2 AH vergisi dusulerek net kar ve ROI hesaplanir.
+        AH Sniping ve Gecmis Satis Analizi:
+        1. Aktif LBIN ve 2. LBIN'i karsilastirir.
+        2. Coflnet gecmis satis veritabanindan son 24 saatlik satis adedi (Volume)
+           ve ortalama satis fiyatini (Real Avg) ceker.
+        3. Kar projeksiyonunu yapay 2. LBIN yerine gercek satis fiyatina gore dogrular!
         """
         bin_auctions = await self.fetch_all_bin_auctions()
         if not bin_auctions:
             return []
 
+        # Isimlerine gore grupla
         groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for a in bin_auctions:
             raw_name = a.get("item_name", "")
@@ -100,14 +106,13 @@ class AuctionService:
             if clean_name:
                 groups[clean_name].append(a)
 
-        flips: List[AHFlipItem] = []
+        candidates: List[Dict[str, Any]] = []
 
         for name, auctions in groups.items():
             if len(auctions) < min_listings:
                 continue
 
             auctions.sort(key=lambda x: float(x.get("starting_bid", 0)))
-
             lbin_auc = auctions[0]
             second_auc = auctions[1]
 
@@ -123,7 +128,58 @@ class AuctionService:
             if max_budget is not None and lbin > max_budget:
                 continue
 
-            target_sell_price = second_lbin * 0.99
+            candidates.append({
+                "name": name,
+                "base_name": extract_base_item_name(name),
+                "lbin": lbin,
+                "second_lbin": second_lbin,
+                "lbin_auc": lbin_auc,
+                "total_listings": len(auctions),
+            })
+
+        # Kar marjina gore ilk 20 adayi sec ve gecmis verilerini paralel sorgula
+        candidates.sort(key=lambda x: (x["second_lbin"] - x["lbin"]), reverse=True)
+        top_candidates = candidates[:30]
+
+        flips: List[AHFlipItem] = []
+
+        for c in top_candidates:
+            base_name = c["base_name"]
+            item_id_guess = base_name.upper().replace(" ", "_").replace("'", "")
+
+            # Coflnet'ten son 24 saatlik veriyi cek
+            history = await coflnet_service.get_item_history_24h(item_id_guess)
+
+            lbin = c["lbin"]
+            second_lbin = c["second_lbin"]
+
+            daily_vol = 0
+            avg_price = None
+            liquidity_status = "ORTA"
+            risk_warning = None
+
+            if history:
+                daily_vol = history.get("daily_volume", 0)
+                avg_price = history.get("avg_price")
+
+                if daily_vol >= 15:
+                    liquidity_status = "YUKSEK"
+                elif daily_vol >= 3:
+                    liquidity_status = "ORTA"
+                else:
+                    liquidity_status = "RISKLI"
+                    risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi! Dikkatli olun."
+
+                # Gercekci Satis Fiyati: 2. LBIN, gercek ortalamanin cok ustundeyse ortalama fiyata gore hesapla
+                if avg_price and second_lbin > (avg_price * 1.20):
+                    target_sell_price = round(avg_price * 1.02, 0)
+                else:
+                    target_sell_price = round(second_lbin * 0.99, 0)
+            else:
+                target_sell_price = round(second_lbin * 0.99, 0)
+                liquidity_status = "ORTA"
+
+            # Net Kar: %2 AH kesintisi
             net_revenue = target_sell_price * 0.98
             profit = net_revenue - lbin
 
@@ -136,16 +192,21 @@ class AuctionService:
 
             flips.append(
                 AHFlipItem(
-                    item_name=name,
-                    tier=lbin_auc.get("tier"),
-                    category=lbin_auc.get("category"),
+                    item_name=c["name"],
+                    item_id=item_id_guess,
+                    tier=c["lbin_auc"].get("tier"),
+                    category=c["lbin_auc"].get("category"),
                     lowest_bin=round(lbin, 0),
                     second_lowest_bin=round(second_lbin, 0),
                     target_sell_price=round(target_sell_price, 0),
                     net_profit=round(profit, 0),
                     margin_percent=round(margin_percent, 1),
-                    total_listings=len(auctions),
-                    auction_uuid=lbin_auc.get("uuid", ""),
+                    total_listings=c["total_listings"],
+                    auction_uuid=c["lbin_auc"].get("uuid", ""),
+                    daily_volume=daily_vol,
+                    avg_sold_price=avg_price,
+                    liquidity_status=liquidity_status,
+                    risk_warning=risk_warning,
                 )
             )
 

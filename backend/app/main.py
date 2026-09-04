@@ -7,9 +7,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, engine, Base
+import app.models
 from app.api.v1.router import api_router
 from app.services.bazaar_service import sync_bazaar_to_db
+from app.services.auction_recorder import sync_ended_auctions_to_db
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -27,13 +29,34 @@ async def bazaar_background_updater():
             print(f"Bazaar arka plan guncelleme hatasi: {e}")
 
 
+async def ah_sales_recorder_loop():
+    """Arka planda her 60 saniyede bir Hypixel auctions_ended endpoint'ini dinler ve satis gecmisini PostgreSQL'e kaydeder."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            async with AsyncSessionLocal() as session:
+                saved = await sync_ended_auctions_to_db(session)
+                if saved > 0:
+                    print(f"[DB] {saved} yeni Auction House satisi veritabanina kaydedildi.")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"AH satis kaydetme hatasi: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Uygulama baslatildiginda ve kapatildiginda calisacak gorevler."""
+    """Uygulama baslatildiginda calisacak gorevler."""
     print("[INFO] Skyblock Buffet Backend Baslatiliyor...")
-    updater_task = asyncio.create_task(bazaar_background_updater())
+    # Tablolari kontrol et ve varsa eksik tablolari olustur
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    t1 = asyncio.create_task(bazaar_background_updater())
+    t2 = asyncio.create_task(ah_sales_recorder_loop())
     yield
-    updater_task.cancel()
+    t1.cancel()
+    t2.cancel()
     print("[INFO] Skyblock Buffet Backend Kapatildi.")
 
 
@@ -43,7 +66,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Ayarlari
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,17 +74,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API v1 Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# Statik Dosyalar ve Web Dashboard
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
 async def serve_dashboard():
-    """Ana sayfada Web Dashboard arayuzunu sunar."""
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
