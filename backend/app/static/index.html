@@ -43,7 +43,6 @@
     .tier-SPECIAL { color: #ff5555; }
     .tier-VERY_SPECIAL { color: #ff5555; }
 
-    /* Custom Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
@@ -101,7 +100,7 @@
       </button>
       <button onclick="switchTab('craft')" id="tab-craft" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
         <i data-lucide="hammer" class="w-4 h-4"></i>
-        Craft Flipping
+        Akıllı Craft Flipping (AH & Bazaar)
       </button>
       <button onclick="switchTab('auction')" id="tab-auction" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
         <i data-lucide="landmark" class="w-4 h-4"></i>
@@ -109,18 +108,30 @@
       </button>
     </div>
 
+    <!-- CRAFT MARKET SUB-FILTER (Yalnizca Craft sekmesinde aktif) -->
+    <div id="craft-subfilters" class="hidden flex items-center gap-2 bg-dark-900 border border-slate-800 p-2 rounded-xl">
+      <span class="text-xs font-medium text-slate-400 px-2">Satış Pazarı:</span>
+      <button onclick="setCraftMarket('all')" id="cm-all" class="cm-btn px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 text-white transition">
+        Tümü (En Karlılar)
+      </button>
+      <button onclick="setCraftMarket('ah')" id="cm-ah" class="cm-btn px-3 py-1 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition">
+        🏛️ Yalnızca AH'ye Satış
+      </button>
+      <button onclick="setCraftMarket('bazaar')" id="cm-bazaar" class="cm-btn px-3 py-1 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition">
+        📊 Yalnızca Bazaar'a Satış
+      </button>
+    </div>
+
     <!-- FILTER BAR -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 bg-dark-900 border border-slate-800 p-4 rounded-xl">
-      <!-- Search -->
       <div>
         <label class="block text-xs font-medium text-slate-400 mb-1">Eşya Ara</label>
         <div class="relative">
           <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-500"></i>
-          <input type="text" id="searchInput" oninput="filterCurrentData()" placeholder="Örn: Hyperion, Cookie, Diamond..." class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white placeholder-slate-500 transition" />
+          <input type="text" id="searchInput" oninput="filterCurrentData()" placeholder="Örn: Speed, Hyperion, Diamond..." class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white placeholder-slate-500 transition" />
         </div>
       </div>
 
-      <!-- Max Budget -->
       <div>
         <label class="block text-xs font-medium text-slate-400 mb-1">Maksimum Bütçe (Coins)</label>
         <div class="relative">
@@ -129,16 +140,14 @@
         </div>
       </div>
 
-      <!-- Min Profit -->
       <div>
         <label class="block text-xs font-medium text-slate-400 mb-1">Minimum Net Kar (Coins)</label>
         <div class="relative">
           <i data-lucide="trending-up" class="w-4 h-4 absolute left-3 top-3 text-emerald-400"></i>
-          <input type="number" id="minProfitInput" value="1000" class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white transition" />
+          <input type="number" id="minProfitInput" value="10000" class="w-full pl-9 pr-3 py-2 bg-dark-800 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500 text-white transition" />
         </div>
       </div>
 
-      <!-- Apply Filter Button -->
       <div class="flex items-end">
         <button onclick="loadActiveTab()" class="w-full bg-dark-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-200 hover:text-white py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2">
           <i data-lucide="filter" class="w-4 h-4"></i>
@@ -192,7 +201,7 @@
       <!-- Loading State -->
       <div id="loading" class="hidden py-16 flex flex-col items-center justify-center gap-3">
         <i data-lucide="loader-2" class="w-8 h-8 text-emerald-400 animate-spin"></i>
-        <p class="text-sm text-slate-400">Piyasa verileri ve satış geçmişleri analiz ediliyor...</p>
+        <p class="text-sm text-slate-400">Piyasa verileri, karar ağaçları ve kar marjları hesaplanıyor...</p>
       </div>
 
       <!-- Empty State -->
@@ -204,19 +213,37 @@
 
   </main>
 
-  <!-- MODAL: RECIPE DETAIL -->
-  <div id="recipeModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-dark-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl flex flex-col gap-4">
+  <!-- MODAL: SMART CRAFT STEP-BY-STEP GUIDE -->
+  <div id="guideModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-dark-900 border border-slate-700 rounded-2xl max-w-xl w-full p-6 shadow-2xl flex flex-col gap-4">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h3 id="modalTitle" class="text-base font-bold text-white">Tarif Detayı</h3>
-        <button onclick="closeModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-dark-800 transition">
+        <div>
+          <h3 id="guideTitle" class="text-base font-bold text-white">Adım Adım Yapılış Rehberi</h3>
+          <p id="guideSubtitle" class="text-xs text-slate-400">En karlı üretim ve satış yol haritası</p>
+        </div>
+        <button onclick="closeGuideModal()" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-dark-800 transition">
           <i data-lucide="x" class="w-5 h-5"></i>
         </button>
       </div>
-      <div id="modalContent" class="flex flex-col gap-2 max-h-96 overflow-y-auto"></div>
-      <div class="border-t border-slate-800 pt-3 flex justify-between items-center text-xs">
-        <span class="text-slate-400">Toplam Hammadde Maliyeti:</span>
-        <span id="modalTotalCost" class="font-bold text-emerald-400 text-sm">0 coins</span>
+
+      <div id="guideStepsList" class="flex flex-col gap-3 max-h-[28rem] overflow-y-auto pr-1">
+        <!-- Adımlar dinamik eklenir -->
+      </div>
+
+      <!-- Summary Card -->
+      <div class="bg-dark-950 border border-slate-800 p-4 rounded-xl flex flex-col gap-2 text-xs font-mono">
+        <div class="flex justify-between text-slate-400">
+          <span>Toplam Harcanan Bütçe:</span>
+          <span id="guideTotalCost" class="text-slate-200 font-bold">0 coins</span>
+        </div>
+        <div class="flex justify-between text-slate-400">
+          <span>Vergi Sonrası Net Satış Geliri:</span>
+          <span id="guideNetRevenue" class="text-slate-200 font-bold">0 coins</span>
+        </div>
+        <div class="border-t border-slate-800 pt-2 flex justify-between items-center text-sm font-bold">
+          <span class="text-emerald-400 font-sans">Net Tahmini Kar:</span>
+          <span id="guideNetProfit" class="text-emerald-400 text-base font-bold">+0 coins</span>
+        </div>
       </div>
     </div>
   </div>
@@ -229,6 +256,7 @@
 
   <script>
     let currentTab = 'bazaar';
+    let craftMarket = 'all';
     let rawData = [];
     let countdown = 60;
     let timerInterval = null;
@@ -262,6 +290,26 @@
       const activeBtn = document.getElementById(`tab-${tab}`);
       activeBtn.classList.remove('text-slate-400');
       activeBtn.classList.add('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
+
+      const craftSub = document.getElementById('craft-subfilters');
+      if (tab === 'craft') {
+        craftSub.classList.remove('hidden');
+      } else {
+        craftSub.classList.add('hidden');
+      }
+
+      loadActiveTab();
+    }
+
+    function setCraftMarket(m) {
+      craftMarket = m;
+      document.querySelectorAll('.cm-btn').forEach(btn => {
+        btn.classList.remove('bg-emerald-600', 'text-white');
+        btn.classList.add('bg-dark-800', 'text-slate-400');
+      });
+      const act = document.getElementById(`cm-${m}`);
+      act.classList.remove('bg-dark-800', 'text-slate-400');
+      act.classList.add('bg-emerald-600', 'text-white');
       loadActiveTab();
     }
 
@@ -277,7 +325,7 @@
       empty.classList.add('hidden');
       tbody.innerHTML = '';
 
-      const minProfit = document.getElementById('minProfitInput').value || '1000';
+      const minProfit = document.getElementById('minProfitInput').value || '10000';
       const budget = document.getElementById('budgetInput').value;
       let budgetParam = budget ? `&max_budget=${budget}` : '';
 
@@ -285,7 +333,7 @@
       if (currentTab === 'bazaar') {
         url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=100`;
       } else if (currentTab === 'craft') {
-        url = `/api/v1/craft/flips?min_profit=${minProfit}${budgetParam}&limit=100`;
+        url = `/api/v1/craft/smart-flips?market=${craftMarket}&min_profit=${minProfit}${budgetParam}&limit=60`;
       } else if (currentTab === 'auction') {
         url = `/api/v1/auction/flips?min_profit=${minProfit || 100000}${budgetParam}&limit=50`;
       }
@@ -355,31 +403,43 @@
         thead.innerHTML = `
           <tr>
             <th class="px-6 py-3.5">Üretilen Eşya</th>
-            <th class="px-6 py-3.5">Hammadde Maliyeti</th>
+            <th class="px-6 py-3.5 text-center">Satış Pazarı</th>
+            <th class="px-6 py-3.5">Optimal Maliyet</th>
             <th class="px-6 py-3.5">Satış Değeri</th>
-            <th class="px-6 py-3.5 text-emerald-400">Craft Karı</th>
+            <th class="px-6 py-3.5 text-emerald-400">Net Kar</th>
             <th class="px-6 py-3.5 text-amber-400">ROI %</th>
-            <th class="px-6 py-3.5 text-cyan-400 font-bold">Saatlik Kar (PPH)</th>
-            <th class="px-6 py-3.5 text-center">Tarif</th>
+            <th class="px-6 py-3.5 text-center font-sans">Yol Haritası</th>
           </tr>
         `;
         tbody.innerHTML = data.map((item, idx) => {
-          maxPPH = Math.max(maxPPH, item.profit_per_hour);
+          maxPPH = Math.max(maxPPH, item.net_profit);
           sumROI += item.margin_percent;
+
+          const isAH = item.target_market === 'AUCTION_HOUSE';
+          const marketBadge = isAH
+            ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-sans font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-400">🏛️ Auction House</span>`
+            : `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-sans font-bold border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">📊 Bazaar</span>`;
+
+          const savingsBadge = item.savings > 0
+            ? `<span class="block text-[10px] text-amber-400 font-sans">💡 ${formatNumber(item.savings)} coins tasarruf</span>`
+            : '';
+
           return `
             <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
               <td class="px-6 py-3 font-sans font-medium text-slate-200">
-                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.result_name}</span>
-                <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id} (${item.result_quantity}x)</span>
+                <span class="tier-${item.tier || 'COMMON'} font-bold text-sm">${item.result_name}</span>
+                <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id}</span>
+                ${savingsBadge}
               </td>
-              <td class="px-6 py-3 text-slate-300">${formatNumber(item.material_cost)}</td>
-              <td class="px-6 py-3 text-slate-300">${formatNumber(item.sell_price)}</td>
-              <td class="px-6 py-3 font-bold text-emerald-400">+${formatNumber(item.profit)}</td>
-              <td class="px-6 py-3 text-amber-400 font-semibold">%${item.margin_percent.toFixed(1)}</td>
-              <td class="px-6 py-3 font-bold text-cyan-400 text-sm">${formatNumber(item.profit_per_hour)}</td>
-              <td class="px-6 py-3 text-center">
-                <button onclick="openRecipeModal(${idx})" class="px-3 py-1.5 bg-dark-800 hover:bg-emerald-600/20 hover:text-emerald-400 border border-slate-700 hover:border-emerald-500/30 rounded-lg text-[11px] font-sans transition">
-                  Malzemeleri Gör
+              <td class="px-6 py-3 text-center">${marketBadge}</td>
+              <td class="px-6 py-3 text-slate-300 font-bold">${formatNumber(item.optimal_cost)}</td>
+              <td class="px-6 py-3 text-slate-300 font-bold">${formatNumber(item.sell_price)}</td>
+              <td class="px-6 py-3 font-bold text-emerald-400 text-sm">+${formatNumber(item.net_profit)}</td>
+              <td class="px-6 py-3 text-amber-400 font-bold">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 text-center font-sans">
+                <button onclick="openGuideModal(${idx})" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition shadow-sm">
+                  <i data-lucide="list-ordered" class="w-3.5 h-3.5"></i>
+                  Adım Adım Rehber
                 </button>
               </td>
             </tr>
@@ -470,27 +530,62 @@
       renderTable(filtered);
     }
 
-    function openRecipeModal(idx) {
+    function openGuideModal(idx) {
       const item = rawData[idx];
-      if (!item) return;
-      document.getElementById('modalTitle').innerText = `${item.result_name} (${item.result_quantity}x) Tarifi`;
-      const container = document.getElementById('modalContent');
-      container.innerHTML = item.ingredients.map(ing => `
-        <div class="flex items-center justify-between p-2.5 rounded-lg bg-dark-800 border border-slate-700/60 text-xs">
-          <div>
-            <p class="font-bold text-slate-200">${ing.name}</p>
-            <p class="text-slate-400 text-[10px] font-mono">${ing.quantity}x @ ${formatNumber(ing.unit_cost)} coins</p>
+      if (!item || !item.steps) return;
+
+      document.getElementById('guideTitle').innerText = `${item.result_name} Yapılış Rehberi`;
+      document.getElementById('guideSubtitle').innerText = `Hedef Pazar: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | ${item.steps.length} Adım`;
+
+      const list = document.getElementById('guideStepsList');
+      list.innerHTML = item.steps.map(s => {
+        let icon = 'shopping-bag';
+        let actionBadge = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+        let actionName = 'Bazaar Alış';
+
+        if (s.action_type === 'BUY_AH') {
+          icon = 'landmark';
+          actionBadge = 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+          actionName = 'AH Hazır Alım';
+        } else if (s.action_type === 'CRAFT') {
+          icon = 'hammer';
+          actionBadge = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+          actionName = 'Crafting';
+        } else if (s.action_type.startsWith('SELL')) {
+          icon = 'badge-dollar-sign';
+          actionBadge = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+          actionName = 'Satış';
+        }
+
+        return `
+          <div class="p-3 rounded-xl bg-dark-800 border border-slate-700/60 flex flex-col gap-1.5">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-dark-900 border border-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300">
+                  ${s.step_number}
+                </span>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${actionBadge}">
+                  ${actionName}
+                </span>
+                <span class="font-bold text-slate-200 text-xs font-sans">${s.quantity}x ${s.item_name}</span>
+              </div>
+              <span class="font-bold text-amber-400 font-mono text-xs">${formatNumber(s.total_price)} coins</span>
+            </div>
+            ${s.note ? `<p class="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg font-sans mt-1">💡 ${s.note}</p>` : ''}
           </div>
-          <span class="font-bold text-amber-400 font-mono">${formatNumber(ing.total_cost)} coins</span>
-        </div>
-      `).join('');
-      document.getElementById('modalTotalCost').innerText = `${formatNumber(item.material_cost)} coins`;
-      document.getElementById('recipeModal').classList.remove('hidden');
+        `;
+      }).join('');
+
+      document.getElementById('guideTotalCost').innerText = `${formatNumber(item.optimal_cost)} coins`;
+      document.getElementById('guideNetRevenue').innerText = `${formatNumber(item.net_revenue)} coins`;
+      document.getElementById('guideNetProfit').innerText = `+${formatNumber(item.net_profit)} coins (%${item.margin_percent.toFixed(1)} ROI)`;
+
+      document.getElementById('guideModal').classList.remove('hidden');
       lucide.createIcons();
     }
 
-    function closeModal() {
-      document.getElementById('recipeModal').classList.add('hidden');
+    function closeGuideModal() {
+      document.getElementById('guideModal').classList.add('hidden');
     }
 
     function resetCountdown() {
