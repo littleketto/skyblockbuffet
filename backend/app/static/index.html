@@ -289,6 +289,57 @@
     let countdown = REFRESH_INTERVAL;
     let isAutoRefreshPaused = false;
     let timerInterval = null;
+    let sortColumn = 'profit_per_hour';
+    let sortDirection = 'desc';
+
+    function getSortHeaderHtml(title, col, extraClasses = '') {
+      const isActive = (sortColumn === col);
+      let arrow = '<span class="text-slate-600 opacity-40 group-hover:opacity-100 transition text-[10px] ml-1">⇅</span>';
+      if (isActive) {
+        arrow = sortDirection === 'asc' 
+          ? '<span class="text-emerald-400 text-xs ml-1 font-bold">▲</span>' 
+          : '<span class="text-emerald-400 text-xs ml-1 font-bold">▼</span>';
+      }
+      return `
+        <th onclick="handleSort('${col}')" class="px-6 py-3.5 cursor-pointer hover:bg-dark-800/80 transition select-none group ${extraClasses}">
+          <div class="inline-flex items-center gap-1 ${extraClasses.includes('text-center') ? 'justify-center' : ''}">
+            <span>${title}</span>
+            ${arrow}
+          </div>
+        </th>
+      `;
+    }
+
+    function handleSort(col) {
+      if (sortColumn === col) {
+        sortDirection = (sortDirection === 'asc') ? 'desc' : 'asc';
+      } else {
+        sortColumn = col;
+        // Text/name columns default to asc (A-Z), numeric metrics default to desc (highest first)
+        const isText = (col === 'name' || col === 'item_name' || col === 'result_name' || col === 'target_market');
+        sortDirection = isText ? 'asc' : 'desc';
+      }
+      applySorting();
+      currentPage = 1;
+      renderTable(filteredData, false);
+    }
+
+    function applySorting() {
+      if (!filteredData || filteredData.length === 0 || !sortColumn) return;
+      filteredData.sort((a, b) => {
+        let valA = a[sortColumn];
+        let valB = b[sortColumn];
+        if (valA === undefined || valA === null) valA = (typeof valB === 'string' ? '' : 0);
+        if (valB === undefined || valB === null) valB = (typeof valA === 'string' ? '' : 0);
+
+        if (typeof valA === 'string' || typeof valB === 'string') {
+          return sortDirection === 'asc'
+            ? String(valA).localeCompare(String(valB), 'tr')
+            : String(valB).localeCompare(String(valA), 'tr');
+        }
+        return sortDirection === 'asc' ? Number(valA) - Number(valB) : Number(valB) - Number(valA);
+      });
+    }
 
     function toggleAutoRefresh() {
       isAutoRefreshPaused = !isAutoRefreshPaused;
@@ -343,6 +394,17 @@
       currentPage = 1;
       const searchEl = document.getElementById('searchInput');
       if (searchEl) searchEl.value = '';
+
+      if (tab === 'bazaar') {
+        sortColumn = 'profit_per_hour';
+        sortDirection = 'desc';
+      } else if (tab === 'craft') {
+        sortColumn = 'net_profit';
+        sortDirection = 'desc';
+      } else if (tab === 'auction') {
+        sortColumn = 'net_profit';
+        sortDirection = 'desc';
+      }
 
       document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
@@ -461,13 +523,13 @@
 
         thead.innerHTML = `
           <tr>
-            <th class="px-6 py-3.5">Eşya Adı</th>
-            <th class="px-6 py-3.5">Alış Emri (Buy Order)</th>
-            <th class="px-6 py-3.5">Satış Emri (Sell Offer)</th>
-            <th class="px-6 py-3.5 text-emerald-400">Net Kar / Adet</th>
-            <th class="px-6 py-3.5 text-amber-400">ROI %</th>
-            <th class="px-6 py-3.5">Saatlik Hacim</th>
-            <th class="px-6 py-3.5 text-cyan-400 font-bold">Saatlik Kar (PPH)</th>
+            ${getSortHeaderHtml('Eşya Adı', 'name')}
+            ${getSortHeaderHtml('Alış Emri (Buy Order)', 'buy_price')}
+            ${getSortHeaderHtml('Satış Emri (Sell Offer)', 'sell_price')}
+            ${getSortHeaderHtml('Net Kar / Adet', 'profit_per_item', 'text-emerald-400')}
+            ${getSortHeaderHtml('ROI %', 'margin_percent', 'text-amber-400')}
+            ${getSortHeaderHtml('Saatlik Hacim', 'hourly_volume')}
+            ${getSortHeaderHtml('Saatlik Kar (PPH)', 'profit_per_hour', 'text-cyan-400 font-bold')}
           </tr>
         `;
         tbody.innerHTML = displayItems.map(item => `
@@ -489,12 +551,12 @@
         if (paginationBar) paginationBar.classList.add('hidden');
         thead.innerHTML = `
           <tr>
-            <th class="px-6 py-3.5">Üretilen Eşya</th>
-            <th class="px-6 py-3.5 text-center">Satış Pazarı</th>
-            <th class="px-6 py-3.5">Optimal Maliyet</th>
-            <th class="px-6 py-3.5">Satış Değeri</th>
-            <th class="px-6 py-3.5 text-emerald-400">Net Kar</th>
-            <th class="px-6 py-3.5 text-amber-400">ROI %</th>
+            ${getSortHeaderHtml('Üretilen Eşya', 'result_name')}
+            ${getSortHeaderHtml('Satış Pazarı', 'target_market', 'text-center')}
+            ${getSortHeaderHtml('Optimal Maliyet', 'optimal_cost')}
+            ${getSortHeaderHtml('Satış Değeri', 'sell_price')}
+            ${getSortHeaderHtml('Net Kar', 'net_profit', 'text-emerald-400')}
+            ${getSortHeaderHtml('ROI %', 'margin_percent', 'text-amber-400')}
             <th class="px-6 py-3.5 text-center font-sans">Yol Haritası</th>
           </tr>
         `;
@@ -537,13 +599,13 @@
         if (paginationBar) paginationBar.classList.add('hidden');
         thead.innerHTML = `
           <tr>
-            <th class="px-6 py-3.5">Eşya Adı</th>
-            <th class="px-6 py-3.5">En Ucuz (LBIN)</th>
-            <th class="px-6 py-3.5">2. En Ucuz (2nd BIN)</th>
-            <th class="px-6 py-3.5 text-slate-300">24s Ortalama Satış</th>
-            <th class="px-6 py-3.5 text-center">24s Satış Hacmi</th>
-            <th class="px-6 py-3.5 text-emerald-400">Tahmini Net Kar</th>
-            <th class="px-6 py-3.5 text-amber-400">ROI %</th>
+            ${getSortHeaderHtml('Eşya Adı', 'item_name')}
+            ${getSortHeaderHtml('En Ucuz (LBIN)', 'lowest_bin')}
+            ${getSortHeaderHtml('2. En Ucuz (2nd BIN)', 'second_lowest_bin')}
+            ${getSortHeaderHtml('24s Ortalama Satış', 'avg_sold_price', 'text-slate-300')}
+            ${getSortHeaderHtml('24s Satış Hacmi', 'daily_volume', 'text-center')}
+            ${getSortHeaderHtml('Tahmini Net Kar', 'net_profit', 'text-emerald-400')}
+            ${getSortHeaderHtml('ROI %', 'margin_percent', 'text-amber-400')}
             <th class="px-6 py-3.5 text-center">Oyun İçi Komut</th>
           </tr>
         `;
@@ -607,7 +669,7 @@
     function filterCurrentData() {
       const search = document.getElementById('searchInput').value.toLowerCase();
       if (!search) {
-        filteredData = rawData || [];
+        filteredData = rawData ? [...rawData] : [];
       } else {
         filteredData = (rawData || []).filter(item => {
           const name = (item.name || item.result_name || item.item_name || '').toLowerCase();
@@ -615,6 +677,7 @@
           return name.includes(search) || id.includes(search);
         });
       }
+      applySorting();
       renderTable(filteredData, false);
     }
 
