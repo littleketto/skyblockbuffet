@@ -1,4 +1,6 @@
 ﻿import re
+import base64
+import gzip
 import asyncio
 import httpx
 from collections import defaultdict
@@ -25,8 +27,27 @@ def clean_minecraft_text(text: str) -> str:
     return clean.strip()
 
 
+def extract_item_id_from_bytes(bytes_data: str) -> Optional[str]:
+    """Hypixel item_bytes NBT akisindan kesin oyun ici esya kodunu cikarir."""
+    if not bytes_data:
+        return None
+    try:
+        raw = gzip.decompress(base64.b64decode(bytes_data))
+        # NBT Tag_String 'id' degeri
+        m = re.search(rb"\x08\x00\x02id\x00.([A-Za-z0-9_]+)", raw)
+        if m:
+            return m.group(1).decode("ascii", errors="ignore")
+        # Pet esyalari icin petInfo kontrolu
+        m_pet = re.search(rb"type.:.([A-Za-z0-9_]+)", raw)
+        if m_pet:
+            return f"{m_pet.group(1).decode('ascii', errors='ignore')}_PET"
+    except Exception:
+        pass
+    return None
+
+
 def extract_base_item_name(name: str) -> str:
-    """Reforgelari ve yıldızları ayıklayarak saf eşya adını bulur."""
+    """Reforgelari ve yildizlari ayiklayarak saf esya adini bulur."""
     clean = re.sub(r"[\*\✪\§]+", "", name).strip()
     for r in REFORGES:
         if clean.lower().startswith(r.lower() + " "):
@@ -90,9 +111,9 @@ class AuctionService:
         """
         AH Sniping ve Gecmis Satis Analizi:
         1. Aktif LBIN ve 2. LBIN'i karsilastirir.
-        2. Coflnet gecmis satis veritabanindan son 24 saatlik satis adedi (Volume)
+        2. NBT verisinden kesin item_id degerini cikarir.
+        3. Coflnet gecmis satis veritabanindan son 24 saatlik satis adedini (Volume)
            ve ortalama satis fiyatini (Real Avg) ceker.
-        3. Kar projeksiyonunu yapay 2. LBIN yerine gercek satis fiyatina gore dogrular!
         """
         bin_auctions = await self.fetch_all_bin_auctions()
         if not bin_auctions:
@@ -128,34 +149,38 @@ class AuctionService:
             if max_budget is not None and lbin > max_budget:
                 continue
 
+            # NBT'den kesin item_id'yi cikar
+            nbt_id = extract_item_id_from_bytes(lbin_auc.get("item_bytes", ""))
+            if not nbt_id:
+                base_name = extract_base_item_name(name)
+                nbt_id = base_name.upper().replace(" ", "_").replace("'", "")
+
             candidates.append({
                 "name": name,
-                "base_name": extract_base_item_name(name),
+                "item_id": nbt_id,
                 "lbin": lbin,
                 "second_lbin": second_lbin,
                 "lbin_auc": lbin_auc,
                 "total_listings": len(auctions),
             })
 
-        # Kar marjina gore ilk 20 adayi sec ve gecmis verilerini paralel sorgula
+        # Kar marjina gore ilk 30 adayi sec ve gecmis verilerini sorgula
         candidates.sort(key=lambda x: (x["second_lbin"] - x["lbin"]), reverse=True)
-        top_candidates = candidates[:30]
+        top_candidates = candidates[:35]
+
+        # Paralel Coflnet gecmis sorgusu
+        history_tasks = [coflnet_service.get_item_history_24h(c["item_id"]) for c in top_candidates]
+        histories = await asyncio.gather(*history_tasks)
 
         flips: List[AHFlipItem] = []
 
-        for c in top_candidates:
-            base_name = c["base_name"]
-            item_id_guess = base_name.upper().replace(" ", "_").replace("'", "")
-
-            # Coflnet'ten son 24 saatlik veriyi cek
-            history = await coflnet_service.get_item_history_24h(item_id_guess)
-
+        for c, history in zip(top_candidates, histories):
             lbin = c["lbin"]
             second_lbin = c["second_lbin"]
 
             daily_vol = 0
             avg_price = None
-            liquidity_status = "ORTA"
+            liquidity_status = "RISKLI"
             risk_warning = None
 
             if history:
@@ -168,16 +193,18 @@ class AuctionService:
                     liquidity_status = "ORTA"
                 else:
                     liquidity_status = "RISKLI"
-                    risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi! Dikkatli olun."
+                    risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi."
 
-                # Gercekci Satis Fiyati: 2. LBIN, gercek ortalamanin cok ustundeyse ortalama fiyata gore hesapla
+                # Gercekci Satis Fiyati: 2. LBIN gercek ortalamanin %20 uzerindeyse ortalamaya gore hesapla
                 if avg_price and second_lbin > (avg_price * 1.20):
                     target_sell_price = round(avg_price * 1.02, 0)
                 else:
                     target_sell_price = round(second_lbin * 0.99, 0)
             else:
                 target_sell_price = round(second_lbin * 0.99, 0)
-                liquidity_status = "ORTA"
+                daily_vol = 0
+                liquidity_status = "RISKLI"
+                risk_warning = "24 saatlik gecmis satis verisi bulunamadi."
 
             # Net Kar: %2 AH kesintisi
             net_revenue = target_sell_price * 0.98
@@ -193,7 +220,7 @@ class AuctionService:
             flips.append(
                 AHFlipItem(
                     item_name=c["name"],
-                    item_id=item_id_guess,
+                    item_id=c["item_id"],
                     tier=c["lbin_auc"].get("tier"),
                     category=c["lbin_auc"].get("category"),
                     lowest_bin=round(lbin, 0),
