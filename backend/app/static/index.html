@@ -129,6 +129,38 @@
       </button>
     </div>
 
+    <!-- AUCTION CATEGORY SUB-FILTER (Yalnizca Auction sekmesinde aktif) -->
+    <div id="auction-categories" class="hidden flex items-center gap-1.5 bg-dark-900 border border-slate-800 p-2 rounded-xl overflow-x-auto text-xs">
+      <span class="text-xs font-medium text-slate-400 px-2 flex items-center gap-1 whitespace-nowrap">
+        <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+        Kategori:
+      </span>
+      <button onclick="setAuctionCategory('all')" id="ac-all" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        🌐 Tümü
+      </button>
+      <button onclick="setAuctionCategory('weapons')" id="ac-weapons" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        ⚔️ Silahlar
+      </button>
+      <button onclick="setAuctionCategory('armor')" id="ac-armor" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        🛡️ Zırhlar
+      </button>
+      <button onclick="setAuctionCategory('accessories')" id="ac-accessories" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        💍 Aksesuarlar
+      </button>
+      <button onclick="setAuctionCategory('pets')" id="ac-pets" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        🐾 Petler
+      </button>
+      <button onclick="setAuctionCategory('consumables')" id="ac-consumables" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        🧪 Tüketim
+      </button>
+      <button onclick="setAuctionCategory('cosmetics')" id="ac-cosmetics" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        🎨 Kozmetikler
+      </button>
+      <button onclick="setAuctionCategory('tools_misc')" id="ac-tools_misc" class="ac-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap">
+        ⛏️ Aletler & Çeşitli
+      </button>
+    </div>
+
     <!-- FILTER BAR -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4 bg-dark-900 border border-slate-800 p-4 rounded-xl">
       <div>
@@ -375,6 +407,7 @@
   <script>
     let currentTab = 'bazaar';
     let craftMarket = 'all';
+    let auctionCategory = 'all';
     let rawData = [];
     let filteredData = [];
     let currentPage = 1;
@@ -509,10 +542,16 @@
       activeBtn.classList.add('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
 
       const craftSub = document.getElementById('craft-subfilters');
+      const auctionCat = document.getElementById('auction-categories');
       if (tab === 'craft') {
         craftSub.classList.remove('hidden');
       } else {
         craftSub.classList.add('hidden');
+      }
+      if (tab === 'auction') {
+        auctionCat.classList.remove('hidden');
+      } else {
+        auctionCat.classList.add('hidden');
       }
 
       loadActiveTab();
@@ -528,6 +567,21 @@
       act.classList.remove('bg-dark-800', 'text-slate-400');
       act.classList.add('bg-emerald-600', 'text-white');
       loadActiveTab();
+    }
+
+    function setAuctionCategory(cat) {
+      auctionCategory = cat;
+      document.querySelectorAll('.ac-btn').forEach(btn => {
+        btn.classList.remove('bg-emerald-600', 'text-white');
+        btn.classList.add('bg-dark-800', 'text-slate-400');
+      });
+      const act = document.getElementById(`ac-${cat}`);
+      if (act) {
+        act.classList.remove('bg-dark-800', 'text-slate-400');
+        act.classList.add('bg-emerald-600', 'text-white');
+      }
+      currentPage = 1;
+      loadActiveTab(true);
     }
 
     async function loadActiveTab(isManual = false) {
@@ -560,7 +614,8 @@
       } else if (currentTab === 'craft') {
         url = `/api/v1/craft/smart-flips?market=${craftMarket}&min_profit=${minProfit}${budgetParam}&limit=60${freshParam}`;
       } else if (currentTab === 'auction') {
-        url = `/api/v1/auction/flips?min_profit=${minProfit}${budgetParam}&limit=6000${freshParam}`;
+        let catParam = (auctionCategory && auctionCategory !== 'all') ? `&category=${auctionCategory}` : '';
+        url = `/api/v1/auction/flips?min_profit=${minProfit}${budgetParam}${catParam}&limit=6000${freshParam}`;
       }
 
       try {
@@ -749,10 +804,21 @@
             ? `${item.daily_volume} satış` 
             : `<button onclick="querySingleAHHistory('${item.item_id}', '${item.item_name.replace(/'/g, "\\'")}')" class="text-[10px] text-cyan-400 underline hover:text-cyan-300">Sorgula</button>`;
 
+          const catNames = {
+            weapons: '⚔️ Silah',
+            armor: '🛡️ Zırh',
+            accessories: '💍 Tılsım',
+            pets: '🐾 Pet',
+            consumables: '🧪 Tüketim',
+            cosmetics: '🎨 Kozmetik',
+            tools_misc: '⛏️ Alet/Çeşitli'
+          };
+          const catBadge = catNames[item.category] ? `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-sans font-medium bg-slate-800 text-slate-400 border border-slate-700/60 ml-1.5">${catNames[item.category]}</span>` : '';
+
           return `
             <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
               <td class="px-6 py-3 font-sans font-medium text-slate-200">
-                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.item_name}</span>
+                <span class="tier-${item.tier || 'COMMON'} font-bold">${item.item_name}</span>${catBadge}
                 <span class="block text-[10px] text-slate-500 font-mono">${item.total_listings || 1} aktif ilan</span>
                 ${item.risk_warning ? `<span class="block text-[10px] text-rose-400">⚠️ ${item.risk_warning}</span>` : ''}
               </td>

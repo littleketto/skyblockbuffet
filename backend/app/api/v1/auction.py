@@ -12,6 +12,7 @@ async def get_auction_flips(
     min_profit: float = Query(0.0, description="Minimum net kar (coins)"),
     min_margin: float = Query(0.0, description="Minimum kar marji (ROI %)"),
     max_budget: Optional[float] = Query(None, description="Maksimum alis butcesi (coins)"),
+    category: Optional[str] = Query(None, description="Kategori (weapons, armor, accessories, consumables, pets, cosmetics, tools_misc)"),
     limit: Optional[int] = Query(6000, ge=1, le=10000, description="Listelenecek maksimum ilan sayisi"),
     fresh: bool = Query(False, description="Zorunlu anlik guncelleme"),
 ):
@@ -23,9 +24,11 @@ async def get_auction_flips(
         min_profit=min_profit,
         min_margin=min_margin,
         max_budget=max_budget,
+        category=category,
         limit=limit,
         fresh=fresh,
     )
+
 
 
 @router.get("/history/{item_id}")
