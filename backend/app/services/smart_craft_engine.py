@@ -475,7 +475,7 @@ class SmartCraftEngine:
                 # 1. Alis adimlari (Bazaar / AH Buy / NPC / Coins)
                 buy_groups = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "action": "", "name": "", "notes": []})
                 for s in raw_steps:
-                    if s["action"].startswith("BUY") or s["action"] == "COINS":
+                    if "BUY" in s["action"] or s["action"] == "COINS":
                         k = (s["item_id"], s["action"])
                         buy_groups[k]["qty"] += s["quantity"]
                         buy_groups[k]["total"] += s["total_price"]
