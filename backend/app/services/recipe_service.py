@@ -1,4 +1,4 @@
-﻿import json
+import json
 import urllib.request
 import tarfile
 from collections import defaultdict
@@ -16,11 +16,12 @@ NEU_TARBALL_URL = "https://codeload.github.com/NotEnoughUpdates/NotEnoughUpdates
 def fetch_recipes_from_archive() -> List[Dict[str, Any]]:
     """
     NotEnoughUpdates resmi deposundan tum Skyblock tariflerini
-    bellekte stream ederek parse eder.
+    bellekte stream ederek parse eder. Hem eski tekil 'recipe' formatini
+    hem de modern coklu 'recipes' (crafting & forge) formatini destekler.
     """
     print("NotEnoughUpdates deposundan tarif arsivi indiriliyor...")
     req = urllib.request.Request(NEU_TARBALL_URL, headers={"User-Agent": "Mozilla/5.0"})
-    recipes = []
+    raw_recipes = []
 
     with urllib.request.urlopen(req, timeout=45) as resp:
         with tarfile.open(fileobj=resp, mode="r|gz") as tar:
@@ -31,32 +32,91 @@ def fetch_recipes_from_archive() -> List[Dict[str, Any]]:
                         continue
                     try:
                         data = json.load(f)
+                        internalname = data.get("internalname")
+
+                        candidate_recipes = []
+
+                        # 1. Eski tekil 'recipe' sozlugu
                         rec = data.get("recipe")
                         if isinstance(rec, dict):
-                            item_id = data.get("internalname")
-                            count = rec.get("count", 1)
-                            if not isinstance(count, int) or count < 1:
+                            candidate_recipes.append(("crafting", rec))
+
+                        # 2. Modern coklu 'recipes' listesi
+                        recs = data.get("recipes")
+                        if isinstance(recs, list):
+                            for r in recs:
+                                if isinstance(r, dict):
+                                    r_type = r.get("type", "crafting")
+                                    candidate_recipes.append((r_type, r))
+
+                        for r_type, r_dict in candidate_recipes:
+                            if r_type not in ("crafting", "forge"):
+                                continue
+
+                            item_id = r_dict.get("overrideOutputId") or internalname
+                            if not item_id:
+                                continue
+
+                            count_val = r_dict.get("count", 1)
+                            try:
+                                count = int(float(count_val))
+                                if count < 1:
+                                    count = 1
+                            except Exception:
                                 count = 1
 
                             ingredients = defaultdict(int)
-                            for slot, val in rec.items():
-                                if slot == "count" or not val or not isinstance(val, str):
-                                    continue
-                                parts = val.split(":")
-                                ing_id = parts[0].strip()
-                                qty = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
-                                if ing_id:
-                                    ingredients[ing_id] += qty
 
-                            if ingredients and item_id:
-                                recipes.append({
+                            # Standart crafting slotlari (A1..C3)
+                            for slot in ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"]:
+                                val = r_dict.get(slot)
+                                if val and isinstance(val, str):
+                                    parts = val.split(":")
+                                    ing_id = parts[0].strip()
+                                    qty_str = parts[1] if len(parts) > 1 else "1"
+                                    try:
+                                        qty = int(float(qty_str))
+                                        if ing_id:
+                                            ingredients[ing_id] += qty
+                                    except Exception:
+                                        pass
+
+                            # Forge girdi listesi (['ITEM:QTY', ...])
+                            if r_type == "forge" and "inputs" in r_dict:
+                                for inp in r_dict.get("inputs", []):
+                                    if isinstance(inp, str):
+                                        parts = inp.split(":")
+                                        ing_id = parts[0].strip()
+                                        qty_str = parts[1] if len(parts) > 1 else "1"
+                                        try:
+                                            qty = int(float(qty_str))
+                                            if ing_id:
+                                                ingredients[ing_id] += qty
+                                        except Exception:
+                                            pass
+
+                            if ingredients:
+                                raw_recipes.append({
                                     "result_item_id": item_id,
                                     "result_quantity": count,
+                                    "recipe_type": r_type,
                                     "ingredients": dict(ingredients),
                                 })
                     except Exception:
                         pass
-    return recipes
+
+    # Ayni esya icin mukerrer birebir ayni tarifleri ayikla
+    seen = set()
+    deduped = []
+    for r in raw_recipes:
+        ing_tuple = tuple(sorted(r["ingredients"].items()))
+        key = (r["result_item_id"], r["result_quantity"], r["recipe_type"], ing_tuple)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+
+    print(f"Tarif arsivinden {len(deduped)} benzersiz tarif basariyla cikarildi.")
+    return deduped
 
 
 async def sync_recipes_to_db(db: AsyncSession) -> Tuple[int, int]:
@@ -116,7 +176,7 @@ async def sync_recipes_to_db(db: AsyncSession) -> Tuple[int, int]:
         recipe = Recipe(
             result_item_id=r_data["result_item_id"],
             result_quantity=r_data["result_quantity"],
-            recipe_type="crafting",
+            recipe_type=r_data.get("recipe_type", "crafting"),
             is_active=True,
         )
         db.add(recipe)

@@ -87,6 +87,7 @@ class SmartCraftEngine:
 
         # 5. Her esya icin "Buy vs Craft" Karar Fonksiyonu (Memoized / Recursive)
         memo: Dict[str, Tuple[Optional[float], List[Dict[str, Any]], float]] = {}
+        visiting: set = set()
 
         def is_raw_compactor(recipe: Recipe) -> bool:
             """160 ham esya -> 1 enchantli esya gibi compactor tariflerini tespit eder."""
@@ -99,6 +100,10 @@ class SmartCraftEngine:
         def resolve_cost(item_id: str, depth: int = 0) -> Tuple[Optional[float], List[Dict[str, Any]], float]:
             if item_id in memo:
                 return memo[item_id]
+            if item_id in visiting:
+                return (None, [], 0.0)
+
+            visiting.add(item_id)
 
             item_obj = items_dict.get(item_id)
             item_name = item_obj.name if item_obj else item_id.replace("_", " ").title()
@@ -107,8 +112,6 @@ class SmartCraftEngine:
             bazaar_buy_cost = None
             if item_id in bazaar_dict and float(bazaar_dict[item_id].sell_price) > 0:
                 bazaar_buy_cost = float(bazaar_dict[item_id].sell_price)
-            elif item_obj and item_obj.npc_sell_price:
-                bazaar_buy_cost = float(item_obj.npc_sell_price)
 
             # Secenek 2: Auction House'dan LBIN ile satin alma maliyeti
             ah_buy_cost = None
@@ -119,7 +122,7 @@ class SmartCraftEngine:
             # Secenek 3: Craftlama Maliyeti
             craft_cost = None
             craft_substeps = []
-            if item_id in recipe_dict and depth < 2:
+            if item_id in recipe_dict and depth < 4:
                 r = recipe_dict[item_id][0]
                 # Eger bu esya tek bir ham maddeden olusan compactor esyasiysa (orn: 160 Flint -> Enchanted Flint)
                 # ve Bazaar'da satiliyorsa, ara urun olarak sifirdan yuzbinlerce ham madde alip craftlamak yerine
@@ -240,6 +243,7 @@ class SmartCraftEngine:
                 }]
 
             memo[item_id] = (best_cost, steps, savings)
+            visiting.remove(item_id)
             return memo[item_id]
 
         # 6. Tum tarifler icin en karli ciktiyi hesapla
