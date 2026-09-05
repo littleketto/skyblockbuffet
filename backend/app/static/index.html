@@ -526,7 +526,7 @@
         sortColumn = 'profit_per_hour';
         sortDirection = 'desc';
       } else if (tab === 'craft') {
-        sortColumn = 'net_profit';
+        sortColumn = 'profit_per_hour';
         sortDirection = 'desc';
       } else if (tab === 'auction') {
         sortColumn = 'profit_per_hour';
@@ -719,23 +719,38 @@
             ${getSortHeaderHtml('Satış Pazarı', 'target_market', 'text-center')}
             ${getSortHeaderHtml('Optimal Maliyet', 'optimal_cost')}
             ${getSortHeaderHtml('Satış Değeri', 'sell_price')}
+            ${getSortHeaderHtml('24s Ortalama & Hacim', 'volume_24h')}
+            ${getSortHeaderHtml('7 Günlük Hacim', 'volume_7d')}
             ${getSortHeaderHtml('Net Kar', 'net_profit', 'text-emerald-400')}
             ${getSortHeaderHtml('ROI %', 'margin_percent', 'text-amber-400')}
+            ${getSortHeaderHtml('Saatlik Kar (PPH)', 'profit_per_hour', 'text-cyan-400 font-bold')}
             <th class="px-6 py-3.5 text-center font-sans">Yol Haritası</th>
           </tr>
         `;
         tbody.innerHTML = data.map((item, idx) => {
-          maxPPH = Math.max(maxPPH, item.net_profit);
+          maxPPH = Math.max(maxPPH, item.profit_per_hour);
           sumROI += item.margin_percent;
 
           const isAH = item.target_market === 'AUCTION_HOUSE';
           const marketBadge = isAH
-            ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-sans font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-400">🏛️ Auction House</span>`
-            : `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-sans font-bold border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">📊 Bazaar</span>`;
+            ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-sans font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-400">🏛️ AH</span>`
+            : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-sans font-bold border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">📊 Bazaar</span>`;
 
           const savingsBadge = item.savings > 0
             ? `<span class="block text-[10px] text-amber-400 font-sans">💡 ${formatNumber(item.savings)} coins tasarruf</span>`
             : '';
+
+          const warningBadge = item.risk_warning
+            ? `<span class="block text-[10px] text-rose-400 font-sans font-semibold mt-0.5">⚠️ ${item.risk_warning}</span>`
+            : '';
+
+          const vol24hDisplay = item.volume_24h > 0
+            ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_24h)}</span> <span class="text-[10px] text-slate-500">satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_24h)} ort.</div>`
+            : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`;
+
+          const vol7dDisplay = item.volume_7d > 0
+            ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_7d)}</span> <span class="text-[10px] text-slate-500">7g satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_7d)} ort.</div>`
+            : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`;
 
           return `
             <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
@@ -743,12 +758,16 @@
                 <span class="tier-${item.tier || 'COMMON'} font-bold text-sm">${item.result_name}</span>
                 <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id}</span>
                 ${savingsBadge}
+                ${warningBadge}
               </td>
               <td class="px-6 py-3 text-center">${marketBadge}</td>
               <td class="px-6 py-3 text-slate-300 font-bold">${formatNumber(item.optimal_cost)}</td>
               <td class="px-6 py-3 text-slate-300 font-bold">${formatNumber(item.sell_price)}</td>
+              <td class="px-6 py-3 font-mono text-xs">${vol24hDisplay}</td>
+              <td class="px-6 py-3 font-mono text-xs">${vol7dDisplay}</td>
               <td class="px-6 py-3 font-bold text-emerald-400 text-sm">+${formatNumber(item.net_profit)}</td>
               <td class="px-6 py-3 text-amber-400 font-bold">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 font-bold text-cyan-400 text-sm font-mono">${formatNumber(item.profit_per_hour)}</td>
               <td class="px-6 py-3 text-center font-sans">
                 <button onclick="openGuideModal(${idx})" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition shadow-sm">
                   <i data-lucide="list-ordered" class="w-3.5 h-3.5"></i>
@@ -758,6 +777,7 @@
             </tr>
           `;
         }).join('');
+
 
       } else if (currentTab === 'auction') {
         data.forEach(item => {

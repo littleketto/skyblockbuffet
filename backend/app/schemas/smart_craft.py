@@ -1,4 +1,4 @@
-﻿from typing import List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -30,4 +30,13 @@ class SmartCraftFlipItem(BaseModel):
     hourly_volume: int = Field(0, description="Tahmini saatlik pazar satis hacmi")
     profit_per_hour: float = Field(0.0, description="Saatlik tahmini kar")
 
+    # 24s ve 7g Satis Analizi
+    avg_price_24h: Optional[float] = Field(None, description="Son 24 saatteki ortalama gercek satis fiyati")
+    volume_24h: int = Field(0, description="Son 24 saatte gerceklesen toplam satis adedi")
+    avg_price_7d: Optional[float] = Field(None, description="Son 7 gunluk ortalama satis fiyati")
+    volume_7d: int = Field(0, description="Son 7 gunde gerceklesen toplam satis adedi")
+    liquidity_status: str = Field("ORTA", description="Likidite Durumu (YUKSEK, ORTA, RISKLI)")
+    risk_warning: Optional[str] = Field(None, description="Risk veya dikkat uyarisi")
+
     steps: List[SmartCraftStep] = Field(..., description="Oyuncunun takip edecegi sira ile yapilis rehberi")
+

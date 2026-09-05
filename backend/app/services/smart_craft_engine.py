@@ -11,7 +11,7 @@ from app.models.item import Item
 from app.models.recipe import Recipe, RecipeIngredient
 from app.models.bazaar import BazaarSnapshot
 from app.schemas.smart_craft import SmartCraftFlipItem, SmartCraftStep
-from app.services.auction_service import auction_service, clean_minecraft_text, extract_base_item_name
+from app.services.auction_service import auction_service, clean_minecraft_text, extract_base_item_name, extract_item_info_from_bytes
 
 
 class SmartCraftEngine:
@@ -50,9 +50,10 @@ class SmartCraftEngine:
         for r in recipes_res.scalars().all():
             recipe_dict[r.result_item_id].append(r)
 
-        # 4. Auction House aktif BIN ilanlarini topla: { clean_name_lower: (lbin, auction_uuid, tier, category) }
+        # 4. Auction House aktif BIN ilanlarini topla: { clean_name_lower: (lbin, auction_uuid, tier, category, listings_count, median_price) }
         bin_auctions = await auction_service.fetch_all_bin_auctions(max_concurrent=15)
         ah_lbin_map: Dict[str, Dict[str, Any]] = {}
+        ah_auctions_by_name: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
         for a in bin_auctions:
             raw_name = a.get("item_name", "")
@@ -61,17 +62,28 @@ class SmartCraftEngine:
             price = float(a.get("starting_bid", 0))
             if price <= 1000:
                 continue
+            ah_auctions_by_name[base_name].append(a)
 
-            if base_name not in ah_lbin_map or price < ah_lbin_map[base_name]["price"]:
-                ah_lbin_map[base_name] = {
-                    "price": price,
-                    "uuid": a.get("uuid", ""),
-                    "tier": a.get("tier"),
-                    "category": a.get("category"),
-                    "full_name": clean,
-                }
+        for base_name, aucs in ah_auctions_by_name.items():
+            aucs.sort(key=lambda x: float(x.get("starting_bid", 0)))
+            lbin_auc = aucs[0]
+            price = float(lbin_auc.get("starting_bid", 0))
+            prices = [float(x.get("starting_bid", 0)) for x in aucs]
+            median_p = sum(prices[:min(5, len(prices))]) / min(5, len(prices))
+            second_p = prices[1] if len(prices) > 1 else price
+            ah_lbin_map[base_name] = {
+                "price": price,
+                "uuid": lbin_auc.get("uuid", ""),
+                "tier": lbin_auc.get("tier"),
+                "category": lbin_auc.get("category"),
+                "full_name": clean_minecraft_text(lbin_auc.get("item_name", "")),
+                "listings_count": len(aucs),
+                "second_price": second_p,
+                "median_price": median_p,
+            }
 
         print(f"Smart Craft: {len(ah_lbin_map)} farkli AH esyasi ve {len(bazaar_dict)} Bazaar urunu ile karar agaci cozuluyor...")
+
 
         # 5. Her esya icin "Buy vs Craft" Karar Fonksiyonu (Memoized / Recursive)
         memo: Dict[str, Tuple[Optional[float], List[Dict[str, Any]], float]] = {}
@@ -412,14 +424,73 @@ class SmartCraftEngine:
                     )
                 )
 
-                hourly_vol = 5
                 if opt["market"] == "BAZAAR" and result_item_id in bazaar_dict:
-                    hourly_vol = int(bazaar_dict[result_item_id].sell_moving_week / 168)
+                    bz_snap = bazaar_dict[result_item_id]
+                    vol_7d = int(bz_snap.sell_moving_week)
+                    vol_24h = int(round(vol_7d / 7.0))
+                    avg_price_24h = round(float(bz_snap.buy_price), 1)
+                    avg_price_7d = round(float(bz_snap.buy_price), 1)
 
-                if hourly_vol <= 0:
-                    pph = 0.0
+                    if vol_7d <= 0 or vol_24h <= 0:
+                        liquidity_status = "RISKLI"
+                        risk_warning = "Bazaar'da talep yok (Hacim: 0). Satın alan oyuncu yok!"
+                        hourly_vol = 0
+                        pph = 0.0
+                    else:
+                        hourly_vol = max(1, round(vol_24h / 24.0))
+                        if vol_24h >= 20:
+                            liquidity_status = "YUKSEK"
+                            risk_warning = None
+                        elif vol_24h >= 5:
+                            liquidity_status = "ORTA"
+                            risk_warning = None
+                        else:
+                            liquidity_status = "RISKLI"
+                            risk_warning = f"Son 24 saatte sadece {vol_24h} adet satıldı."
+                        hourly_cap = min(15.0, max(0.1, hourly_vol * 0.12))
+                        pph = round(profit * hourly_cap, 0)
                 else:
-                    pph = profit * min(60.0, max(1.0, hourly_vol * 0.10))
+                    # AUCTION_HOUSE
+                    base_lower = item_name.lower()
+                    ah_info = ah_lbin_map.get(base_lower, {})
+                    listings_count = ah_info.get("listings_count", 1)
+                    median_p = ah_info.get("median_price", opt["price"])
+
+                    # Absurt / Sahte Ilan Kontrolu:
+                    # Pazar fiyati maliyetinin 10 katindan fazla ve tek aktif ilansa (orn: 4 coins maliyet -> 538M satis)
+                    is_absurd_markup = (listings_count <= 1 and (opt["price"] / max(1.0, total_cost)) > 10.0 and opt["price"] > 10_000_000)
+
+                    if is_absurd_markup or listings_count <= 1:
+                        vol_24h = 0
+                        vol_7d = 0
+                        avg_price_24h = round(opt["price"], 0)
+                        avg_price_7d = round(opt["price"], 0)
+                        liquidity_status = "RISKLI"
+                        if is_absurd_markup:
+                            risk_warning = "⚠️ Absürt / Sahte Satış Fiyatı! Pazarda sadece 1 ilan var."
+                        else:
+                            risk_warning = "Pazarda hiç satılmadı (Hacim: 0, tek aktif ilan)."
+                        hourly_vol = 0
+                        pph = 0.0
+                    else:
+                        vol_24h = max(1, round(listings_count * 1.5))
+                        vol_7d = max(7, round(vol_24h * 7))
+                        avg_price_24h = round(median_p, 0)
+                        avg_price_7d = round(median_p, 0)
+
+                        if vol_24h >= 15:
+                            liquidity_status = "YUKSEK"
+                            risk_warning = None
+                        elif vol_24h >= 4:
+                            liquidity_status = "ORTA"
+                            risk_warning = None
+                        else:
+                            liquidity_status = "RISKLI"
+                            risk_warning = f"Düşük pazar hacmi (~{vol_24h} adet/gün)."
+
+                        hourly_vol = max(1, round(vol_24h / 24.0))
+                        hourly_cap = min(12.0, max(0.1, hourly_vol * 0.15))
+                        pph = round(profit * hourly_cap, 0)
 
                 results.append(
                     SmartCraftFlipItem(
@@ -436,12 +507,21 @@ class SmartCraftEngine:
                         savings=round(total_savings, 1),
                         hourly_volume=hourly_vol,
                         profit_per_hour=round(pph, 1),
+                        avg_price_24h=avg_price_24h,
+                        volume_24h=vol_24h,
+                        avg_price_7d=avg_price_7d,
+                        volume_7d=vol_7d,
+                        liquidity_status=liquidity_status,
+                        risk_warning=risk_warning,
                         steps=formatted_steps,
                     )
                 )
 
-        results.sort(key=lambda x: x.net_profit, reverse=True)
+        # Siralama: Yuksek saatlik kar ve likiditeye sahip gercek firsatlar en basa,
+        # 0 hacimli sahte / absurt ilanlar en sona
+        results.sort(key=lambda x: (x.profit_per_hour, x.net_profit), reverse=True)
         return results[:limit]
+
 
 
 smart_craft_engine = SmartCraftEngine()
