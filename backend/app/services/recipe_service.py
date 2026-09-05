@@ -95,11 +95,19 @@ def fetch_recipes_from_archive() -> List[Dict[str, Any]]:
                                         except Exception:
                                             pass
 
+                            duration_secs = 0
+                            if r_type == "forge":
+                                try:
+                                    duration_secs = int(float(r_dict.get("duration") or r_dict.get("time") or 0))
+                                except Exception:
+                                    duration_secs = 0
+
                             if ingredients:
                                 raw_recipes.append({
                                     "result_item_id": item_id,
                                     "result_quantity": count,
                                     "recipe_type": r_type,
+                                    "duration_seconds": duration_secs,
                                     "ingredients": dict(ingredients),
                                 })
                     except Exception:
@@ -177,6 +185,7 @@ async def sync_recipes_to_db(db: AsyncSession) -> Tuple[int, int]:
             result_item_id=r_data["result_item_id"],
             result_quantity=r_data["result_quantity"],
             recipe_type=r_data.get("recipe_type", "crafting"),
+            duration_seconds=r_data.get("duration_seconds", 0),
             is_active=True,
         )
         db.add(recipe)

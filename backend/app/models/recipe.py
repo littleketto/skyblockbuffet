@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -16,6 +16,7 @@ class Recipe(Base):
     result_item_id: Mapped[str] = mapped_column(String(128), ForeignKey("items.id"), index=True)
     result_quantity: Mapped[int] = mapped_column(Integer, default=1)
     recipe_type: Mapped[str] = mapped_column(String(32), default="crafting")
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, default=0, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

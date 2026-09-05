@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class SmartCraftStep(BaseModel):
     step_number: int
-    action_type: str = Field(..., description="BUY_BAZAAR, INSTA_BUY_BAZAAR, BUY_AH, CRAFT, SELL_AH, SELL_BAZAAR, INSTA_SELL_BAZAAR")
+    action_type: str = Field(..., description="BUY_BAZAAR, INSTA_BUY_BAZAAR, BUY_AH, CRAFT, FORGE, SELL_AH, SELL_BAZAAR, INSTA_SELL_BAZAAR")
     item_name: str
     item_id: Optional[str] = None
     quantity: int
@@ -18,6 +18,7 @@ class SmartCraftFlipItem(BaseModel):
     result_name: str
     tier: Optional[str] = None
     category: Optional[str] = None
+    recipe_type: str = Field("crafting", description="Tarif turu: crafting veya forge")
     target_market: str = Field(..., description="AUCTION_HOUSE veya BAZAAR")
     buy_mode: str = Field("buy_order", description="Hammadde alim modu: buy_order veya insta_buy")
     bazaar_sell_mode: str = Field("sell_offer", description="Bazaar satis modu: sell_offer veya insta_sell")
@@ -29,8 +30,11 @@ class SmartCraftFlipItem(BaseModel):
     margin_percent: float = Field(..., description="Yatirim getirisi (ROI %)")
     savings: float = Field(0.0, description="Hazir satin al / craftla optimizasyonundan saglanan tasarruf")
 
+    duration_seconds: Optional[int] = Field(0, description="Forge döküm süresi saniye")
+    duration_display: Optional[str] = Field(None, description="Okunabilir döküm süresi örn: 6 sa, 30 sn")
+
     hourly_volume: int = Field(0, description="Tahmini saatlik pazar satis hacmi")
-    profit_per_hour: float = Field(0.0, description="Saatlik tahmini kar")
+    profit_per_hour: float = Field(0.0, description="Saatlik tahmini kar (Craft icin satis hacmi bazli, Forge icin döküm suresi bazli)")
 
     # 24s ve 7g Satis Analizi
     avg_price_24h: Optional[float] = Field(None, description="Son 24 saatteki ortalama gercek satis fiyati")

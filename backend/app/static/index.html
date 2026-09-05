@@ -107,7 +107,11 @@
       </button>
       <button onclick="switchTab('craft')" id="tab-craft" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
         <i data-lucide="hammer" class="w-4 h-4"></i>
-        Akıllı Craft Flipping (AH & Bazaar)
+        Akıllı Craft Flipping (Masa)
+      </button>
+      <button onclick="switchTab('forge')" id="tab-forge" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
+        <i data-lucide="anvil" class="w-4 h-4"></i>
+        ⚒️ Dwarven Forge Flipping
       </button>
       <button onclick="switchTab('auction')" id="tab-auction" class="tab-btn flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200 hover:bg-dark-800">
         <i data-lucide="landmark" class="w-4 h-4"></i>
@@ -563,6 +567,9 @@
       } else if (tab === 'craft') {
         sortColumn = 'profit_per_hour';
         sortDirection = 'desc';
+      } else if (tab === 'forge') {
+        sortColumn = 'profit_per_hour';
+        sortDirection = 'desc';
       } else if (tab === 'auction') {
         sortColumn = 'profit_per_hour';
         sortDirection = 'desc';
@@ -573,12 +580,14 @@
         btn.classList.add('text-slate-400');
       });
       const activeBtn = document.getElementById(`tab-${tab}`);
-      activeBtn.classList.remove('text-slate-400');
-      activeBtn.classList.add('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
+      if (activeBtn) {
+        activeBtn.classList.remove('text-slate-400');
+        activeBtn.classList.add('border', 'border-emerald-500/30', 'bg-emerald-500/10', 'text-emerald-400');
+      }
 
       const craftSub = document.getElementById('craft-subfilters');
       const auctionCat = document.getElementById('auction-categories');
-      if (tab === 'craft') {
+      if (tab === 'craft' || tab === 'forge') {
         craftSub.classList.remove('hidden');
       } else {
         craftSub.classList.add('hidden');
@@ -688,7 +697,9 @@
       if (currentTab === 'bazaar') {
         url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
       } else if (currentTab === 'craft') {
-        url = `/api/v1/craft/smart-flips?market=${craftMarket}&buy_mode=${craftBuyMode}&bazaar_sell_mode=${craftBazaarSellMode}&min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
+        url = `/api/v1/craft/smart-flips?recipe_type=crafting&market=${craftMarket}&buy_mode=${craftBuyMode}&bazaar_sell_mode=${craftBazaarSellMode}&min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
+      } else if (currentTab === 'forge') {
+        url = `/api/v1/craft/smart-flips?recipe_type=forge&market=${craftMarket}&buy_mode=${craftBuyMode}&bazaar_sell_mode=${craftBazaarSellMode}&min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
       } else if (currentTab === 'auction') {
         let catParam = (auctionCategory && auctionCategory !== 'all') ? `&category=${auctionCategory}` : '';
         url = `/api/v1/auction/flips?min_profit=${minProfit}${budgetParam}${catParam}&limit=6000${freshParam}`;
@@ -873,6 +884,103 @@
           `;
         }).join('');
 
+      } else if (currentTab === 'forge') {
+        data.forEach(item => {
+          maxPPH = Math.max(maxPPH, item.profit_per_hour);
+          sumROI += item.margin_percent;
+        });
+
+        const totalItems = data.length;
+        const isAll = (pageSize === 'all');
+        const totalPages = isAll ? 1 : Math.max(1, Math.ceil(totalItems / pageSize));
+        if (currentPage > totalPages) currentPage = Math.max(1, totalPages);
+        if (currentPage < 1) currentPage = 1;
+
+        const displayItems = isAll ? data : data.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+        renderPagination(totalItems);
+
+        const isInstaBuy = craftBuyMode === 'insta_buy';
+        const isInstaSell = craftBazaarSellMode === 'insta_sell';
+        const costHeaderTitle = isInstaBuy ? 'Maliyet (Insta-Buy ⚡)' : 'Maliyet (Buy Order ⏳)';
+        const sellHeaderTitle = isInstaSell ? 'Satış (Insta-Sell ⚡)' : 'Satış Değeri';
+
+        thead.innerHTML = `
+          <tr>
+            ${getSortHeaderHtml('Dökülen Eşya', 'result_name')}
+            ${getSortHeaderHtml('Satış Pazarı', 'target_market', 'text-center')}
+            ${getSortHeaderHtml(costHeaderTitle, 'optimal_cost', isInstaBuy ? 'text-amber-400' : 'text-cyan-400')}
+            ${getSortHeaderHtml(sellHeaderTitle, 'sell_price', isInstaSell ? 'text-amber-400' : '')}
+            ${getSortHeaderHtml('Döküm Süresi', 'duration_seconds', 'text-fuchsia-400 font-bold text-center')}
+            ${getSortHeaderHtml('24s Ortalama & Hacim', 'volume_24h')}
+            ${getSortHeaderHtml('7 Günlük Hacim', 'volume_7d')}
+            ${getSortHeaderHtml('Net Kar', 'net_profit', 'text-emerald-400')}
+            ${getSortHeaderHtml('ROI %', 'margin_percent', 'text-amber-400')}
+            ${getSortHeaderHtml('Saatlik Kar (Slot PPH ⚒️)', 'profit_per_hour', 'text-cyan-400 font-bold')}
+            <th class="px-6 py-3.5 text-center font-sans">Döküm Rehberi</th>
+          </tr>
+        `;
+        tbody.innerHTML = displayItems.map((item, idx) => {
+          const globalIdx = isAll ? idx : (currentPage - 1) * pageSize + idx;
+
+          const isAH = item.target_market === 'AUCTION_HOUSE';
+          const marketBadge = isAH
+            ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-sans font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-400">🏛️ AH</span>`
+            : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-sans font-bold border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">📊 Bazaar</span>`;
+
+          const savingsBadge = item.savings > 0
+            ? `<span class="block text-[10px] text-amber-400 font-sans">💡 ${formatNumber(item.savings)} coins tasarruf</span>`
+            : '';
+
+          const warningBadge = item.risk_warning
+            ? `<span class="block text-[10px] text-rose-400 font-sans font-semibold mt-0.5">⚠️ ${item.risk_warning}</span>`
+            : '';
+
+          const vol24hDisplay = item.volume_24h > 0
+            ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_24h)}</span> <span class="text-[10px] text-slate-500">satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_24h)} ort.</div>`
+            : (isAH 
+                ? `<button onclick="querySingleAHHistory('${item.result_item_id}', '${item.result_name.replace(/'/g, "\\'")}')" class="text-[10px] text-cyan-400 underline hover:text-cyan-300 font-semibold" title="Coflnet API'sinden anlık satış geçmişi sorgula">0 satış (Sorgula)</button>`
+                : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`);
+
+          const vol7dDisplay = item.volume_7d > 0
+            ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_7d)}</span> <span class="text-[10px] text-slate-500">7g satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_7d)} ort.</div>`
+            : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`;
+
+          const durationBadge = `
+            <div class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-300 font-semibold text-xs whitespace-nowrap">
+              <i data-lucide="clock" class="w-3 h-3 text-fuchsia-400"></i>
+              <span>${item.duration_display || 'N/A'}</span>
+            </div>
+          `;
+
+          return `
+            <tr class="hover:bg-dark-800/70 transition border-b border-slate-800/40">
+              <td class="px-6 py-3 font-sans font-medium text-slate-200">
+                <span class="tier-${item.tier || 'COMMON'} font-bold text-sm">${item.result_name}</span>
+                <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id}</span>
+                ${savingsBadge}
+                ${warningBadge}
+              </td>
+              <td class="px-6 py-3 text-center">${marketBadge}</td>
+              <td class="px-6 py-3 text-slate-300 font-bold">${formatNumber(item.optimal_cost)}</td>
+              <td class="px-6 py-3 text-slate-300 font-bold">${formatNumber(item.sell_price)}</td>
+              <td class="px-6 py-3 text-center">${durationBadge}</td>
+              <td class="px-6 py-3 font-mono text-xs">${vol24hDisplay}</td>
+              <td class="px-6 py-3 font-mono text-xs">${vol7dDisplay}</td>
+              <td class="px-6 py-3 font-bold text-emerald-400 text-sm">+${formatNumber(item.net_profit)}</td>
+              <td class="px-6 py-3 text-amber-400 font-bold">%${item.margin_percent.toFixed(1)}</td>
+              <td class="px-6 py-3 font-bold text-cyan-400 text-sm font-mono" title="1 Forge Slotu saatlik getirisi: Toplam Kar / Döküm Saati">
+                ${formatNumber(item.profit_per_hour)}
+                <span class="block text-[9px] text-slate-400 font-normal">/saat (slot)</span>
+              </td>
+              <td class="px-6 py-3 text-center font-sans">
+                <button onclick="openGuideModal(${globalIdx})" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-fuchsia-600/20 hover:bg-fuchsia-600 text-fuchsia-300 hover:text-white border border-fuchsia-500/30 rounded-lg text-xs font-semibold transition shadow-sm">
+                  <i data-lucide="anvil" class="w-3.5 h-3.5"></i>
+                  Döküm Rehberi
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
 
       } else if (currentTab === 'auction') {
         data.forEach(item => {
@@ -994,7 +1102,7 @@
 
     function renderPagination(totalItems) {
       const paginationBar = document.getElementById('paginationBar');
-      if ((currentTab !== 'bazaar' && currentTab !== 'auction') || totalItems <= 0) {
+      if (totalItems <= 0) {
         if (paginationBar) paginationBar.classList.add('hidden');
         return;
       }
@@ -1039,15 +1147,15 @@
         }
       }
 
-      pages.forEach(p => {
+      for (let p of pages) {
         if (p === '...') {
-          html += `<span class="px-2 py-1 text-slate-600">...</span>`;
+          html += `<span class="px-2 py-1 text-slate-500 text-xs">...</span>`;
         } else if (p === currentPage) {
-          html += `<button class="px-3 py-1 bg-emerald-600 text-white font-bold rounded border border-emerald-500 shadow-sm">${p}</button>`;
+          html += `<button class="px-2.5 py-1 bg-emerald-600 text-white font-bold rounded text-xs">${p}</button>`;
         } else {
-          html += `<button onclick="goToPage(${p})" class="px-3 py-1 border border-slate-700/80 text-slate-300 hover:bg-dark-800 hover:text-white rounded transition">${p}</button>`;
+          html += `<button onclick="goToPage(${p})" class="px-2.5 py-1 border border-slate-700/80 hover:bg-dark-800 text-slate-300 hover:text-white rounded text-xs transition">${p}</button>`;
         }
-      });
+      }
 
       // Next & Last
       const nextDisabled = currentPage === totalPages ? 'opacity-30 cursor-not-allowed' : 'hover:bg-dark-800 text-slate-300 hover:text-white';
@@ -1081,8 +1189,9 @@
       if (item.target_market === 'BAZAAR') {
         sellModeText = ` | Satış: ${(item.bazaar_sell_mode === 'insta_sell') ? '⚡ Insta-Sell' : '🏷️ Sell Offer'}`;
       }
+      const durText = item.duration_display ? ` | Döküm Süresi: ⏱️ ${item.duration_display}` : '';
       document.getElementById('guideTitle').innerText = `${item.result_name} Yapılış Rehberi`;
-      document.getElementById('guideSubtitle').innerText = `Hedef: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | Alım: ${buyModeText}${sellModeText} | ${item.steps.length} Adım`;
+      document.getElementById('guideSubtitle').innerText = `Hedef: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | Alım: ${buyModeText}${sellModeText}${durText} | ${item.steps.length} Adım`;
 
       const list = document.getElementById('guideStepsList');
       list.innerHTML = item.steps.map(s => {
@@ -1101,7 +1210,11 @@
         } else if (s.action_type === 'CRAFT') {
           icon = 'hammer';
           actionBadge = 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
-          actionName = 'Crafting';
+          actionName = 'Crafting Table';
+        } else if (s.action_type === 'FORGE') {
+          icon = 'anvil';
+          actionBadge = 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20';
+          actionName = '⚒️ Dwarven Forge Dökümü';
         } else if (s.action_type === 'INSTA_SELL_BAZAAR') {
           icon = 'zap';
           actionBadge = 'bg-amber-500/10 text-amber-400 border-amber-500/20';

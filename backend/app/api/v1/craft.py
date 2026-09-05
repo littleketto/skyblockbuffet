@@ -34,6 +34,7 @@ async def get_smart_craft_flips(
     market: str = Query("all", description="all, ah veya bazaar"),
     buy_mode: str = Query("buy_order", description="buy_order veya insta_buy"),
     bazaar_sell_mode: str = Query("sell_offer", description="sell_offer veya insta_sell"),
+    recipe_type: str = Query("crafting", description="crafting, forge veya all"),
     min_profit: float = Query(0.0, description="Minimum net kar (coins)"),
     min_margin: float = Query(0.0, description="Minimum kar marji (ROI %)"),
     max_budget: Optional[float] = Query(None, description="Maksimum butce (coins)"),
@@ -44,6 +45,7 @@ async def get_smart_craft_flips(
     Akilli Cok Asamali Craft Flipping & AH Entegrasyonu:
     Bazaar'dan alip AH'de satma, cok kademeli esyalarda 'Buy vs Craft' optimizasyonu
     ve sira ile adim adim yapilis rehberini dondurur.
+    recipe_type: 'crafting' (varsayilan, aninda masa uretimi) veya 'forge' (Dwarven döküm)
     buy_mode: 'buy_order' (Siparis acarak alma) veya 'insta_buy' (Aninda satin alarak craftlama)
     bazaar_sell_mode: 'sell_offer' (Bazaar'a siparis acarak satis) veya 'insta_sell' (Bazaar'a aninda bozdurarak satis)
     """
@@ -52,6 +54,35 @@ async def get_smart_craft_flips(
         market_filter=market,
         buy_mode=buy_mode,
         bazaar_sell_mode=bazaar_sell_mode,
+        recipe_type=recipe_type,
+        min_profit=min_profit,
+        min_margin=min_margin,
+        max_budget=max_budget,
+        limit=limit,
+    )
+
+
+@router.get("/forge-flips", response_model=List[SmartCraftFlipItem])
+async def get_forge_flips(
+    market: str = Query("all", description="all, ah veya bazaar"),
+    buy_mode: str = Query("buy_order", description="buy_order veya insta_buy"),
+    bazaar_sell_mode: str = Query("sell_offer", description="sell_offer veya insta_sell"),
+    min_profit: float = Query(0.0, description="Minimum net kar (coins)"),
+    min_margin: float = Query(0.0, description="Minimum kar marji (ROI %)"),
+    max_budget: Optional[float] = Query(None, description="Maksimum butce (coins)"),
+    limit: int = Query(3000, ge=1, le=10000, description="Listelenecek firsat sayisi"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Dwarven Mines Forge Flipping:
+    Döküm surelerini (saat/dakika) hesaba katarak Saatlik Slot Kari (PPH) hesaplar.
+    """
+    return await smart_craft_engine.calculate_smart_flips(
+        db=db,
+        market_filter=market,
+        buy_mode=buy_mode,
+        bazaar_sell_mode=bazaar_sell_mode,
+        recipe_type="forge",
         min_profit=min_profit,
         min_margin=min_margin,
         max_budget=max_budget,

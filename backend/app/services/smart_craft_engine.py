@@ -15,12 +15,27 @@ from app.services.auction_service import auction_service, clean_minecraft_text, 
 from app.services.coflnet_service import coflnet_service
 
 
+def format_duration(seconds: int) -> str:
+    if not seconds or seconds <= 0:
+        return "0 sn"
+    if seconds < 60:
+        return f"{seconds} sn"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} dk"
+    hours = seconds / 3600.0
+    if hours.is_integer():
+        return f"{int(hours)} sa"
+    return f"{hours:.1f} sa"
+
+
 class SmartCraftEngine:
     """
     Akilli Cok Asamali Craft Flipping & AH Entegrasyon Motoru
     - Bazaar'dan hammadde alip AH'de satma fırsatlarını bulur.
     - Ara esyalar icin (Buy vs Craft) karsilastirmasi yaparak en ucuz yolu secer.
     - Adim adim yol haritasi (Action Plan) uretir.
+    - Crafting Table ve Dwarven Forge dökümünü bağımsız analiz eder.
     """
 
     async def calculate_smart_flips(
@@ -29,12 +44,13 @@ class SmartCraftEngine:
         market_filter: str = "all", # "all", "ah", "bazaar"
         buy_mode: str = "buy_order", # "buy_order" veya "insta_buy"
         bazaar_sell_mode: str = "sell_offer", # "sell_offer" veya "insta_sell"
+        recipe_type: str = "crafting", # "crafting", "forge" veya "all"
         min_profit: float = 0.0,
         min_margin: float = 0.0,
         max_budget: Optional[float] = None,
         limit: int = 3000,
     ) -> List[SmartCraftFlipItem]:
-        print("Smart Craft Engine: Piyasa verileri ve aktif ilanlar toplaniyor...")
+        print(f"Smart Craft Engine ({recipe_type}): Piyasa verileri ve aktif ilanlar toplaniyor...")
 
         # 1. Bazaar verilerini yukle
         bazaar_res = await db.execute(select(BazaarSnapshot))
@@ -45,13 +61,32 @@ class SmartCraftEngine:
         items_list = items_res.scalars().all()
         items_dict: Dict[str, Item] = {it.id: it for it in items_list}
 
-        # 3. Tum tarifleri yukle: { result_item_id: [Recipe] }
+        # 3. Tum tarifleri yukle ve turune gore ayir
         recipes_res = await db.execute(
             select(Recipe).where(Recipe.is_active == True).options(selectinload(Recipe.ingredients))
         )
-        recipe_dict: Dict[str, List[Recipe]] = defaultdict(list)
-        for r in recipes_res.scalars().all():
-            recipe_dict[r.result_item_id].append(r)
+        all_recipes = recipes_res.scalars().all()
+
+        craft_recipes_dict: Dict[str, List[Recipe]] = defaultdict(list)
+        forge_recipes_dict: Dict[str, List[Recipe]] = defaultdict(list)
+        all_recipes_dict: Dict[str, List[Recipe]] = defaultdict(list)
+
+        for r in all_recipes:
+            all_recipes_dict[r.result_item_id].append(r)
+            if r.recipe_type == "forge":
+                forge_recipes_dict[r.result_item_id].append(r)
+            else:
+                craft_recipes_dict[r.result_item_id].append(r)
+
+        if recipe_type == "forge":
+            target_recipe_dict = forge_recipes_dict
+            intermediate_recipe_dict = all_recipes_dict
+        elif recipe_type == "crafting":
+            target_recipe_dict = craft_recipes_dict
+            intermediate_recipe_dict = craft_recipes_dict
+        else:
+            target_recipe_dict = all_recipes_dict
+            intermediate_recipe_dict = all_recipes_dict
 
         # 4. Auction House aktif BIN ilanlarini topla: { clean_name_lower: (lbin, auction_uuid, tier, category, listings_count, median_price) }
         bin_auctions = await auction_service.fetch_all_bin_auctions(max_concurrent=15)
@@ -135,11 +170,12 @@ class SmartCraftEngine:
             if base_name_lower in ah_lbin_map:
                 ah_buy_cost = ah_lbin_map[base_name_lower]["price"]
 
-            # Secenek 3: Craftlama Maliyeti
+            # Secenek 3: Craftlama / Döküm Maliyeti
             craft_cost = None
             craft_substeps = []
-            if item_id in recipe_dict and depth < 4:
-                r = recipe_dict[item_id][0]
+            if item_id in intermediate_recipe_dict and depth < 4:
+                r = intermediate_recipe_dict[item_id][0]
+                is_sub_forge = (r.recipe_type == "forge")
                 # Eger bu esya tek bir ham maddeden olusan compactor esyasiysa (orn: 160 Flint -> Enchanted Flint)
                 # ve Bazaar'da satiliyorsa, ara urun olarak sifirdan yuzbinlerce ham madde alip craftlamak yerine
                 # dogrudan Bazaar'dan enchantli halini al.
@@ -201,11 +237,13 @@ class SmartCraftEngine:
             savings = 0.0
             steps = []
 
+            inter_action = "FORGE" if (item_id in intermediate_recipe_dict and intermediate_recipe_dict[item_id][0].recipe_type == "forge") else "CRAFT"
+
             if craft_cost is not None and market_cost is not None and depth > 0:
                 if market_cost <= craft_cost:
                     best_cost = market_cost
                     savings = craft_cost - market_cost
-                    note = f"💡 Hazır satın almak, sıfırdan craftlamaktan {round(savings):,} coins daha ucuz!"
+                    note = f"💡 Hazır satın almak, sıfırdan üretmekten {round(savings):,} coins daha ucuz!"
                     steps = [{
                         "action": market_type,
                         "item_id": item_id,
@@ -221,7 +259,7 @@ class SmartCraftEngine:
                     best_cost = craft_cost
                     savings = market_cost - craft_cost
                     steps = craft_substeps + [{
-                        "action": "CRAFT",
+                        "action": inter_action,
                         "item_id": item_id,
                         "item_name": item_name,
                         "quantity": 1,
@@ -234,7 +272,7 @@ class SmartCraftEngine:
             elif craft_cost is not None and depth > 0:
                 best_cost = craft_cost
                 steps = craft_substeps + [{
-                    "action": "CRAFT",
+                    "action": inter_action,
                     "item_id": item_id,
                     "item_name": item_name,
                     "quantity": 1,
@@ -265,10 +303,13 @@ class SmartCraftEngine:
         # 6. Tum tarifler icin en karli cikti adaylarini topla
         candidates: List[Dict[str, Any]] = []
 
-        for result_item_id, recipes in recipe_dict.items():
+        for result_item_id, recipes in target_recipe_dict.items():
             r = recipes[0]
             item_obj = items_dict.get(result_item_id)
             item_name = item_obj.name if item_obj else result_item_id.replace("_", " ").title()
+            is_item_forge = (r.recipe_type == "forge")
+            item_dur_sec = getattr(r, "duration_seconds", 0) or 0
+            item_dur_disp = format_duration(item_dur_sec)
 
             total_cost = 0.0
             raw_steps = []
@@ -396,26 +437,28 @@ class SmartCraftEngine:
                     )
                     step_no += 1
 
-                # 2. Ara Craft Adimlari (Orn: 102x Tarantula Silk uret)
-                intermediate_crafts = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "name": "", "savings": 0.0})
+                # 2. Ara Uretim Adimlari (Crafting Table veya Dwarven Forge)
+                intermediate_crafts = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "name": "", "savings": 0.0, "action": "CRAFT"})
                 for s in raw_steps:
-                    if s["action"] == "CRAFT" and s.get("is_intermediate_craft"):
+                    if s["action"] in ("CRAFT", "FORGE") and s.get("is_intermediate_craft"):
                         k = s["item_id"]
                         intermediate_crafts[k]["qty"] += s["quantity"]
                         intermediate_crafts[k]["total"] += s["total_price"]
                         intermediate_crafts[k]["name"] = s["item_name"]
                         intermediate_crafts[k]["savings"] += s.get("savings_total", 0.0)
+                        intermediate_crafts[k]["action"] = s["action"]
 
                 for item_id, ic in intermediate_crafts.items():
                     qty = int(round(ic["qty"]))
                     unit_p = ic["total"] / max(1, qty)
-                    note_txt = f"Crafting Table'da {qty}x {ic['name']} uret"
+                    inter_prefix = "Dwarven Forge'da" if ic["action"] == "FORGE" else "Crafting Table'da"
+                    note_txt = f"{inter_prefix} {qty}x {ic['name']} uret"
                     if ic["savings"] > 0:
-                        note_txt += f" (💡 Sifirdan craftlamak, hazir almaktan {round(ic['savings']):,} coins daha ucuz!)"
+                        note_txt += f" (💡 Sifirdan üretmek, hazir almaktan {round(ic['savings']):,} coins daha ucuz!)"
                     formatted_steps.append(
                         SmartCraftStep(
                             step_number=step_no,
-                            action_type="CRAFT",
+                            action_type=ic["action"],
                             item_name=ic["name"],
                             item_id=item_id,
                             quantity=qty,
@@ -426,17 +469,19 @@ class SmartCraftEngine:
                     )
                     step_no += 1
 
-                # 3. Nihai Hedef Craft Adimi (Orn: 1x Flycatcher uret)
+                # 3. Nihai Hedef Uretim Adimi (Crafting Table veya Dwarven Forge)
+                final_action = "FORGE" if is_item_forge else "CRAFT"
+                final_note = f"Dwarven Forge'da {item_dur_disp} döküm yap ({r.result_quantity}x {item_name})" if is_item_forge else f"Crafting Table'da {r.result_quantity}x {item_name} uret"
                 formatted_steps.append(
                     SmartCraftStep(
                         step_number=step_no,
-                        action_type="CRAFT",
+                        action_type=final_action,
                         item_name=item_name,
                         item_id=result_item_id,
                         quantity=r.result_quantity,
                         unit_price=round(total_cost, 1),
                         total_price=round(total_cost, 1),
-                        note=f"Crafting Table'da {r.result_quantity}x {item_name} uret",
+                        note=final_note,
                     )
                 )
                 step_no += 1
@@ -461,6 +506,9 @@ class SmartCraftEngine:
                     "item_name": item_name,
                     "tier": opt["tier"],
                     "category": opt["category"],
+                    "recipe_type": r.recipe_type,
+                    "duration_seconds": item_dur_sec,
+                    "duration_display": item_dur_disp,
                     "opt": opt,
                     "total_cost": total_cost,
                     "profit": profit,
@@ -609,12 +657,36 @@ class SmartCraftEngine:
                         hourly_cap = min(12.0, max(0.1, hourly_vol * 0.15))
                         pph = round(profit * hourly_cap, 0)
 
+            cand_recipe_type = c.get("recipe_type", "crafting")
+            cand_dur_sec = c.get("duration_seconds", 0)
+            cand_dur_disp = c.get("duration_display", "0 sn")
+            is_cand_forge = (cand_recipe_type == "forge")
+
+            # Forge esyalari icin Saatlik Slot Kari (PPH) hesabi:
+            # Net Kar / Döküm Saati (orn: 6 saat ise kar/6)
+            if is_cand_forge:
+                dur_hours = max(cand_dur_sec / 3600.0, 30.0 / 3600.0)
+                if dur_hours < 1.0:
+                    max_crafts_per_hour = 3600.0 / max(30, cand_dur_sec)
+                    vol_cap = max(0.1, min(max_crafts_per_hour, max(1, hourly_vol) * 1.0))
+                    pph = round(profit * vol_cap, 1)
+                else:
+                    pph = round(profit / dur_hours, 1)
+
+                if vol_7d <= 0 or vol_24h <= 0:
+                    liquidity_status = "RISKLI"
+                    risk_warning = "Pazarda talep yok (Hacim: 0). Satın alan oyuncu yok!"
+                    pph = 0.0
+
             results.append(
                 SmartCraftFlipItem(
                     result_item_id=result_item_id,
                     result_name=item_name,
                     tier=opt["tier"],
                     category=opt["category"],
+                    recipe_type=cand_recipe_type,
+                    duration_seconds=cand_dur_sec,
+                    duration_display=cand_dur_disp,
                     target_market=opt["market"],
                     buy_mode=buy_mode,
                     bazaar_sell_mode=bazaar_sell_mode,
