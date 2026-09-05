@@ -22,8 +22,15 @@ def format_duration(seconds: int) -> str:
         return f"{seconds} sn"
     minutes = seconds // 60
     if minutes < 60:
-        return f"{minutes} dk"
+        rem_sec = seconds % 60
+        return f"{minutes} dk" if rem_sec == 0 else f"{minutes} dk {rem_sec} sn"
     hours = seconds / 3600.0
+    if hours >= 24:
+        days = int(hours // 24)
+        rem_hours = int(round(hours % 24))
+        if rem_hours == 0:
+            return f"{days} gün"
+        return f"{days}g {rem_hours}sa"
     if hours.is_integer():
         return f"{int(hours)} sa"
     return f"{hours:.1f} sa"
@@ -203,6 +210,7 @@ class SmartCraftEngine:
                                 "note": s.get("note"),
                                 "is_intermediate_craft": s.get("is_intermediate_craft", False),
                                 "savings_total": s.get("savings_total", 0.0) * ing.quantity,
+                                "unit_forge_duration": s.get("unit_forge_duration", 0.0),
                             })
 
                     if can_craft and possible_cost > 0:
@@ -237,7 +245,10 @@ class SmartCraftEngine:
             savings = 0.0
             steps = []
 
-            inter_action = "FORGE" if (item_id in intermediate_recipe_dict and intermediate_recipe_dict[item_id][0].recipe_type == "forge") else "CRAFT"
+            inter_recipe = intermediate_recipe_dict[item_id][0] if item_id in intermediate_recipe_dict else None
+            inter_is_forge = (inter_recipe is not None and inter_recipe.recipe_type == "forge")
+            inter_action = "FORGE" if inter_is_forge else "CRAFT"
+            inter_unit_dur = ((getattr(inter_recipe, "duration_seconds", 0) or 0) / (inter_recipe.result_quantity or 1)) if inter_is_forge else 0.0
 
             if craft_cost is not None and market_cost is not None and depth > 0:
                 if market_cost <= craft_cost:
@@ -254,6 +265,7 @@ class SmartCraftEngine:
                         "note": note,
                         "is_intermediate_craft": False,
                         "savings_total": savings,
+                        "unit_forge_duration": 0.0,
                     }]
                 else:
                     best_cost = craft_cost
@@ -268,6 +280,7 @@ class SmartCraftEngine:
                         "note": None,
                         "is_intermediate_craft": True,
                         "savings_total": savings,
+                        "unit_forge_duration": inter_unit_dur,
                     }]
             elif craft_cost is not None and depth > 0:
                 best_cost = craft_cost
@@ -281,6 +294,7 @@ class SmartCraftEngine:
                     "note": None,
                     "is_intermediate_craft": True,
                     "savings_total": 0.0,
+                    "unit_forge_duration": inter_unit_dur,
                 }]
             elif market_cost is not None:
                 best_cost = market_cost
@@ -294,6 +308,7 @@ class SmartCraftEngine:
                     "note": None,
                     "is_intermediate_craft": False,
                     "savings_total": 0.0,
+                    "unit_forge_duration": 0.0,
                 }]
 
             memo[item_id] = (best_cost, steps, savings)
@@ -334,6 +349,7 @@ class SmartCraftEngine:
                         "note": s.get("note"),
                         "is_intermediate_craft": s.get("is_intermediate_craft", False),
                         "savings_total": s.get("savings_total", 0.0) * ing.quantity,
+                        "unit_forge_duration": s.get("unit_forge_duration", 0.0),
                     })
 
             if not possible or total_cost <= 0:
@@ -438,7 +454,7 @@ class SmartCraftEngine:
                     step_no += 1
 
                 # 2. Ara Uretim Adimlari (Crafting Table veya Dwarven Forge)
-                intermediate_crafts = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "name": "", "savings": 0.0, "action": "CRAFT"})
+                intermediate_crafts = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "name": "", "savings": 0.0, "action": "CRAFT", "unit_forge_duration": 0.0})
                 for s in raw_steps:
                     if s["action"] in ("CRAFT", "FORGE") and s.get("is_intermediate_craft"):
                         k = s["item_id"]
@@ -447,12 +463,25 @@ class SmartCraftEngine:
                         intermediate_crafts[k]["name"] = s["item_name"]
                         intermediate_crafts[k]["savings"] += s.get("savings_total", 0.0)
                         intermediate_crafts[k]["action"] = s["action"]
+                        intermediate_crafts[k]["unit_forge_duration"] = s.get("unit_forge_duration", 0.0)
+
+                total_intermediate_forge_sec = 0
 
                 for item_id, ic in intermediate_crafts.items():
                     qty = int(round(ic["qty"]))
                     unit_p = ic["total"] / max(1, qty)
-                    inter_prefix = "Dwarven Forge'da" if ic["action"] == "FORGE" else "Crafting Table'da"
-                    note_txt = f"{inter_prefix} {qty}x {ic['name']} uret"
+                    if ic["action"] == "FORGE":
+                        inter_unit_dur = int(round(ic.get("unit_forge_duration", 0.0)))
+                        step_dur_sec = qty * inter_unit_dur
+                        total_intermediate_forge_sec += step_dur_sec
+                        if step_dur_sec > 0:
+                            dur_info = f" (⏱️ Toplam: {format_duration(step_dur_sec)} | Adet: {format_duration(inter_unit_dur)})"
+                        else:
+                            dur_info = ""
+                        note_txt = f"Dwarven Forge'da {qty}x {ic['name']} döküm yap{dur_info}"
+                    else:
+                        note_txt = f"Crafting Table'da {qty}x {ic['name']} uret"
+
                     if ic["savings"] > 0:
                         note_txt += f" (💡 Sifirdan üretmek, hazir almaktan {round(ic['savings']):,} coins daha ucuz!)"
                     formatted_steps.append(
@@ -469,9 +498,21 @@ class SmartCraftEngine:
                     )
                     step_no += 1
 
+                final_dur_sec = item_dur_sec if is_item_forge else 0
+                final_dur_disp = item_dur_disp if is_item_forge else None
+                total_forge_sec = (final_dur_sec + total_intermediate_forge_sec) if is_item_forge else 0
+                total_forge_disp = format_duration(total_forge_sec) if is_item_forge else None
+
                 # 3. Nihai Hedef Uretim Adimi (Crafting Table veya Dwarven Forge)
                 final_action = "FORGE" if is_item_forge else "CRAFT"
-                final_note = f"Dwarven Forge'da {item_dur_disp} döküm yap ({r.result_quantity}x {item_name})" if is_item_forge else f"Crafting Table'da {r.result_quantity}x {item_name} uret"
+                if is_item_forge:
+                    if total_intermediate_forge_sec > 0:
+                        final_note = f"Dwarven Forge'da {final_dur_disp} döküm yap ({r.result_quantity}x {item_name}) [Son Aşama]"
+                    else:
+                        final_note = f"Dwarven Forge'da {final_dur_disp} döküm yap ({r.result_quantity}x {item_name})"
+                else:
+                    final_note = f"Crafting Table'da {r.result_quantity}x {item_name} uret"
+
                 formatted_steps.append(
                     SmartCraftStep(
                         step_number=step_no,
@@ -507,8 +548,10 @@ class SmartCraftEngine:
                     "tier": opt["tier"],
                     "category": opt["category"],
                     "recipe_type": r.recipe_type,
-                    "duration_seconds": item_dur_sec,
-                    "duration_display": item_dur_disp,
+                    "duration_seconds": total_forge_sec if is_item_forge else 0,
+                    "duration_display": total_forge_disp if is_item_forge else "0 sn",
+                    "final_duration_seconds": final_dur_sec if is_item_forge else 0,
+                    "final_duration_display": final_dur_disp if is_item_forge else None,
                     "opt": opt,
                     "total_cost": total_cost,
                     "profit": profit,
@@ -660,6 +703,8 @@ class SmartCraftEngine:
             cand_recipe_type = c.get("recipe_type", "crafting")
             cand_dur_sec = c.get("duration_seconds", 0)
             cand_dur_disp = c.get("duration_display", "0 sn")
+            final_dur_sec = c.get("final_duration_seconds", 0)
+            final_dur_disp = c.get("final_duration_display", None)
             is_cand_forge = (cand_recipe_type == "forge")
 
             # Forge esyalari icin Saatlik Slot Kari (PPH) hesabi:
@@ -687,6 +732,8 @@ class SmartCraftEngine:
                     recipe_type=cand_recipe_type,
                     duration_seconds=cand_dur_sec,
                     duration_display=cand_dur_disp,
+                    final_duration_seconds=final_dur_sec,
+                    final_duration_display=final_dur_disp,
                     target_market=opt["market"],
                     buy_mode=buy_mode,
                     bazaar_sell_mode=bazaar_sell_mode,

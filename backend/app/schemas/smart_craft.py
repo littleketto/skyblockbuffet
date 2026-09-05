@@ -30,8 +30,10 @@ class SmartCraftFlipItem(BaseModel):
     margin_percent: float = Field(..., description="Yatirim getirisi (ROI %)")
     savings: float = Field(0.0, description="Hazir satin al / craftla optimizasyonundan saglanan tasarruf")
 
-    duration_seconds: Optional[int] = Field(0, description="Forge döküm süresi saniye")
-    duration_display: Optional[str] = Field(None, description="Okunabilir döküm süresi örn: 6 sa, 30 sn")
+    duration_seconds: Optional[int] = Field(0, description="Toplam Forge döküm süresi saniye (tüm alt adımlar dahil)")
+    duration_display: Optional[str] = Field(None, description="Okunabilir toplam döküm süresi örn: 6 sa, 30 sn")
+    final_duration_seconds: Optional[int] = Field(0, description="Yalnızca son adım döküm süresi saniye")
+    final_duration_display: Optional[str] = Field(None, description="Yalnızca son adım okunabilir süresi örn: 30 sn")
 
     hourly_volume: int = Field(0, description="Tahmini saatlik pazar satis hacmi")
     profit_per_hour: float = Field(0.0, description="Saatlik tahmini kar (Craft icin satis hacmi bazli, Forge icin döküm suresi bazli)")

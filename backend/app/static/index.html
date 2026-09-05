@@ -945,10 +945,14 @@
             ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_7d)}</span> <span class="text-[10px] text-slate-500">7g satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_7d)} ort.</div>`
             : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`;
 
+          const hasMultipleSteps = item.final_duration_display && item.duration_display !== item.final_duration_display;
           const durationBadge = `
-            <div class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-300 font-semibold text-xs whitespace-nowrap">
-              <i data-lucide="clock" class="w-3 h-3 text-fuchsia-400"></i>
-              <span>${item.duration_display || 'N/A'}</span>
+            <div class="inline-flex flex-col items-center">
+              <div class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-300 font-semibold text-xs whitespace-nowrap" title="Tüm aşamalar dahil toplam döküm süresi">
+                <i data-lucide="clock" class="w-3 h-3 text-fuchsia-400"></i>
+                <span>${item.duration_display || 'N/A'}</span>
+              </div>
+              ${hasMultipleSteps ? `<span class="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap" title="Yalnızca nihai döküm süresi">Son Adım: ${item.final_duration_display}</span>` : ''}
             </div>
           `;
 
@@ -1189,7 +1193,14 @@
       if (item.target_market === 'BAZAAR') {
         sellModeText = ` | Satış: ${(item.bazaar_sell_mode === 'insta_sell') ? '⚡ Insta-Sell' : '🏷️ Sell Offer'}`;
       }
-      const durText = item.duration_display ? ` | Döküm Süresi: ⏱️ ${item.duration_display}` : '';
+      let durText = '';
+      if (item.duration_display) {
+        if (item.final_duration_display && item.duration_display !== item.final_duration_display) {
+          durText = ` | Toplam Döküm: ⏱️ ${item.duration_display} (Son Adım: ${item.final_duration_display})`;
+        } else {
+          durText = ` | Döküm Süresi: ⏱️ ${item.duration_display}`;
+        }
+      }
       document.getElementById('guideTitle').innerText = `${item.result_name} Yapılış Rehberi`;
       document.getElementById('guideSubtitle').innerText = `Hedef: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | Alım: ${buyModeText}${sellModeText}${durText} | ${item.steps.length} Adım`;
 
