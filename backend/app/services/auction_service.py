@@ -13,7 +13,12 @@ from app.services.coflnet_service import coflnet_service
 REFORGES = [
     "Fierce", "Spicy", "Heroic", "Withered", "Necrotic", "Clean", "Fast",
     "Ancient", "Giant", "Loving", "Wise", "Renowned", "Submerged", "Jaded",
-    "Hyper", "Grand", "Odd", "Sharp", "Heavy", "Titanic", "Dirty", "Shimmer"
+    "Hyper", "Grand", "Odd", "Sharp", "Heavy", "Titanic", "Dirty", "Shimmer",
+    "Fabled", "Suspicious", "Gentle", "Fair", "Epic", "Sharp", "Deadly",
+    "Fine", "Grand", "Rich", "Magnetic", "Mighty", "Pure", "Smart",
+    "Precise", "Spiritual", "Headstrong", "Strengthened", "Bustling", "Mossy",
+    "Festive", "Lethal", "Heated", "Ambered", "Auspicious", "Fleet", "Stiff",
+    "Lucky", "Very", "Highly", "Extremely", "Not", "Definitely"
 ]
 
 
@@ -33,8 +38,8 @@ def extract_item_id_from_bytes(bytes_data: str) -> Optional[str]:
         return None
     try:
         raw = gzip.decompress(base64.b64decode(bytes_data))
-        # NBT Tag_String 'id' degeri
-        m = re.search(rb"\x08\x00\x02id\x00.([A-Za-z0-9_]+)", raw)
+        # NBT Tag_String 'id' degeri (1 bayt uzunluk on eki)
+        m = re.search(rb"\x08\x00\x02id\x00[\x00-\xff]([A-Za-z0-9_]+)", raw)
         if m:
             return m.group(1).decode("ascii", errors="ignore")
         # Pet esyalari icin petInfo kontrolu
@@ -132,17 +137,33 @@ class AuctionService:
                 if not bin_auctions:
                     return self._cached_flips or []
 
-                # Isimlerine gore grupla
+                # 1. 40.000+ ilani temel esya kimligine (item_id) gore grupla
+                # Boylece Spicy, Fabled, 5 Yildizli varyantlar tek bir saf esya altinda birlesir
                 groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+                display_names: Dict[str, str] = {}
+
                 for a in bin_auctions:
                     raw_name = a.get("item_name", "")
                     clean_name = clean_minecraft_text(raw_name)
-                    if clean_name:
-                        groups[clean_name].append(a)
+                    if not clean_name:
+                        continue
+
+                    # NBT'den kesin oyun ici item_id'yi cikar
+                    item_id = extract_item_id_from_bytes(a.get("item_bytes", ""))
+                    if not item_id:
+                        base_name = extract_base_item_name(clean_name)
+                        item_id = base_name.upper().replace(" ", "_").replace("'", "")
+
+                    groups[item_id].append(a)
+
+                    # En kisa ve reforgesiz ismi kullaniciya gosterilecek baslik olarak sec
+                    base_name = extract_base_item_name(clean_name)
+                    if item_id not in display_names or len(base_name) < len(display_names[item_id]):
+                        display_names[item_id] = base_name
 
                 processed_items: List[Dict[str, Any]] = []
 
-                for name, auctions in groups.items():
+                for item_id, auctions in groups.items():
                     if len(auctions) < min_listings:
                         continue
 
@@ -157,12 +178,6 @@ class AuctionService:
                     second_auc = auctions[1] if has_second else lbin_auc
                     second_lbin = float(second_auc.get("starting_bid", 0)) if has_second else lbin
 
-                    # NBT'den kesin item_id'yi cikar
-                    nbt_id = extract_item_id_from_bytes(lbin_auc.get("item_bytes", ""))
-                    if not nbt_id:
-                        base_name = extract_base_item_name(name)
-                        nbt_id = base_name.upper().replace(" ", "_").replace("'", "")
-
                     # Hedef Satis Fiyati ve Kar
                     if has_second and second_lbin > lbin:
                         target_sell = round(second_lbin * 0.99, 0)
@@ -176,8 +191,8 @@ class AuctionService:
                         margin = 0.0
 
                     processed_items.append({
-                        "name": name,
-                        "item_id": nbt_id,
+                        "name": display_names.get(item_id, extract_base_item_name(clean_minecraft_text(lbin_auc.get("item_name", item_id)))),
+                        "item_id": item_id,
                         "lbin": lbin,
                         "second_lbin": second_lbin,
                         "target_sell": target_sell,
@@ -187,18 +202,19 @@ class AuctionService:
                         "total_listings": len(auctions),
                     })
 
-                # En yuksek kara gore sirala
+                # En yuksek potansiyel kara gore sirala
                 processed_items.sort(key=lambda x: x["profit"], reverse=True)
 
-                # Kullanicinin istegi dogrultusunda ilk 300 adayin 24s gercek satis gecmisini Coflnet'ten asenkron zenginlestir
-                top_slice = processed_items[:300]
-                history_tasks = [coflnet_service.get_item_history_24h(c["item_id"]) for c in top_slice]
-                histories = await asyncio.gather(*history_tasks)
+                # Tum pazardaki kar potansiyeli olan en iyi 350-400 adayin satis verilerini
+                # Coflnet baglanti havuzuyla ~1.5 saniyede cek
+                top_slice = processed_items[:350]
+                top_ids = [c["item_id"] for c in top_slice]
+                histories_map = await coflnet_service.get_multiple_items_history_24h(top_ids, max_concurrent=25)
 
                 enriched_flips: List[AHFlipItem] = []
 
-                for idx, c in enumerate(processed_items):
-                    history = histories[idx] if idx < len(histories) else None
+                for c in processed_items:
+                    history = histories_map.get(c["item_id"])
                     lbin = c["lbin"]
                     second_lbin = c["second_lbin"]
                     profit = c["profit"]

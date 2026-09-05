@@ -1,6 +1,7 @@
 import time
 import httpx
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any, Optional, List
 
 # Bellek ici Onbellek (Cache): 10 dakika (600 saniye) boyunca sonuclari saklar
 # Boylece Coflnet API'sine ayni esya icin tekrar tekrar istek atilmaz.
@@ -63,6 +64,66 @@ class CoflnetService:
             pass
 
         return None
+
+    async def get_multiple_items_history_24h(
+        self, item_ids: List[str], max_concurrent: int = 25
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """
+        Birden fazla esyanin 24 saatlik verisini baglanti havuzu ve semaforla cok hizli sekilde ceker.
+        Zaten onbellekte olan esyalar icin ag istegi yapilmaz.
+        """
+        now = time.time()
+        results: Dict[str, Optional[Dict[str, Any]]] = {}
+        missing_ids: List[str] = []
+
+        for iid in item_ids:
+            if not iid:
+                continue
+            cached = _cache.get(iid)
+            if cached and (now - cached["timestamp"]) < CACHE_TTL:
+                results[iid] = cached["data"]
+            else:
+                missing_ids.append(iid)
+
+        if not missing_ids:
+            return results
+
+        # Eksik olanlari paralel cek
+        sem = asyncio.Semaphore(max_concurrent)
+        limits = httpx.Limits(max_keepalive_connections=30, max_connections=40)
+
+        async def _fetch_single(client: httpx.AsyncClient, iid: str):
+            async with sem:
+                url = f"{self.base_url}/{iid}/history/day"
+                try:
+                    res = await client.get(url, headers=self.headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        if isinstance(data, list) and len(data) > 0:
+                            total_volume = sum(d.get("volume", 0) for d in data)
+                            if total_volume > 0:
+                                avg_price = sum(d.get("avg", 0) * d.get("volume", 0) for d in data) / total_volume
+                                min_price = min(d.get("min", 0) for d in data if d.get("min", 0) > 0)
+                                max_price = max(d.get("max", 0) for d in data)
+
+                                r = {
+                                    "daily_volume": total_volume,
+                                    "avg_price": round(avg_price, 0),
+                                    "min_price": round(min_price, 0),
+                                    "max_price": round(max_price, 0),
+                                }
+                                _cache[iid] = {"timestamp": time.time(), "data": r}
+                                results[iid] = r
+                                return
+                except Exception:
+                    pass
+                results[iid] = None
+
+        async with httpx.AsyncClient(limits=limits, timeout=4.5) as client:
+            tasks = [_fetch_single(client, iid) for iid in missing_ids]
+            await asyncio.gather(*tasks)
+
+        return results
 
     async def get_bazaar_history(self, item_id: str) -> Optional[Dict[str, Any]]:
         """
