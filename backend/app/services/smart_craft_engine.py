@@ -27,6 +27,7 @@ class SmartCraftEngine:
         self,
         db: AsyncSession,
         market_filter: str = "all", # "all", "ah", "bazaar"
+        buy_mode: str = "buy_order", # "buy_order" veya "insta_buy"
         min_profit: float = 0.0,
         min_margin: float = 0.0,
         max_budget: Optional[float] = None,
@@ -109,10 +110,23 @@ class SmartCraftEngine:
             item_obj = items_dict.get(item_id)
             item_name = item_obj.name if item_obj else item_id.replace("_", " ").title()
 
-            # Secenek 1: Bazaar'dan Buy Order ile satin alma maliyeti
+            # Secenek 1: Bazaar'dan satin alma maliyeti (Buy Order veya Insta-Buy)
             bazaar_buy_cost = None
-            if item_id in bazaar_dict and float(bazaar_dict[item_id].sell_price) > 0:
-                bazaar_buy_cost = float(bazaar_dict[item_id].sell_price)
+            bazaar_action_type = "INSTA_BUY_BAZAAR" if buy_mode == "insta_buy" else "BUY_BAZAAR"
+            if item_id in bazaar_dict:
+                bz_s = bazaar_dict[item_id]
+                if buy_mode == "insta_buy":
+                    # Insta-Buy: Aninda almak icin Sell Offer fiyatindan (buy_price) aliriz
+                    if float(bz_s.buy_price) > 0:
+                        bazaar_buy_cost = float(bz_s.buy_price)
+                    elif float(bz_s.sell_price) > 0:
+                        bazaar_buy_cost = float(bz_s.sell_price)
+                else:
+                    # Buy Order: Siparis acarak almak icin Buy Order fiyatindan (sell_price) aliriz
+                    if float(bz_s.sell_price) > 0:
+                        bazaar_buy_cost = float(bz_s.sell_price)
+                    elif float(bz_s.buy_price) > 0:
+                        bazaar_buy_cost = float(bz_s.buy_price)
 
             # Secenek 2: Auction House'dan LBIN ile satin alma maliyeti
             ah_buy_cost = None
@@ -171,13 +185,13 @@ class SmartCraftEngine:
             if bazaar_buy_cost is not None and ah_buy_cost is not None:
                 if bazaar_buy_cost <= ah_buy_cost:
                     market_cost = bazaar_buy_cost
-                    market_type = "BUY_BAZAAR"
+                    market_type = bazaar_action_type
                 else:
                     market_cost = ah_buy_cost
                     market_type = "BUY_AH"
             elif bazaar_buy_cost is not None:
                 market_cost = bazaar_buy_cost
-                market_type = "BUY_BAZAAR"
+                market_type = bazaar_action_type
             elif ah_buy_cost is not None:
                 market_cost = ah_buy_cost
                 market_type = "BUY_AH"
@@ -580,6 +594,7 @@ class SmartCraftEngine:
                     tier=opt["tier"],
                     category=opt["category"],
                     target_market=opt["market"],
+                    buy_mode=buy_mode,
                     optimal_cost=round(total_cost, 1),
                     sell_price=round(opt["price"], 1),
                     net_revenue=round(opt["net_revenue"], 1),
