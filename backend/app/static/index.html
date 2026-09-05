@@ -863,6 +863,7 @@
               <td class="px-6 py-3 font-sans font-medium text-slate-200">
                 <span class="tier-${item.tier || 'COMMON'} font-bold text-sm">${item.result_name}</span>
                 <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id}</span>
+                ${item.recipe_summary ? `<span class="block text-[11px] text-slate-400 font-sans mt-0.5 line-clamp-2" title="Gerekli Reçete Malzemeleri: ${item.recipe_summary}">📋 ${item.recipe_summary}</span>` : ''}
                 ${savingsBadge}
                 ${warningBadge}
               </td>
@@ -961,6 +962,7 @@
               <td class="px-6 py-3 font-sans font-medium text-slate-200">
                 <span class="tier-${item.tier || 'COMMON'} font-bold text-sm">${item.result_name}</span>
                 <span class="block text-[10px] text-slate-500 font-mono">${item.result_item_id}</span>
+                ${item.recipe_summary ? `<span class="block text-[11px] text-slate-400 font-sans mt-0.5 line-clamp-2" title="Gerekli Döküm Malzemeleri: ${item.recipe_summary}">📋 ${item.recipe_summary}</span>` : ''}
                 ${savingsBadge}
                 ${warningBadge}
               </td>
@@ -1204,8 +1206,18 @@
       document.getElementById('guideTitle').innerText = `${item.result_name} Yapılış Rehberi`;
       document.getElementById('guideSubtitle').innerText = `Hedef: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | Alım: ${buyModeText}${sellModeText}${durText} | ${item.steps.length} Adım`;
 
+      const recipeBox = item.recipe_summary
+        ? `<div class="p-3 rounded-xl bg-dark-900 border border-emerald-500/30 mb-3 flex flex-col gap-1">
+             <span class="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+               <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+               Gerekli Ana Reçete Malzemeleri:
+             </span>
+             <span class="text-xs text-slate-200 font-semibold">${item.recipe_summary}</span>
+           </div>`
+        : '';
+
       const list = document.getElementById('guideStepsList');
-      list.innerHTML = item.steps.map(s => {
+      list.innerHTML = recipeBox + item.steps.map(s => {
         let icon = 'shopping-bag';
         let actionBadge = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
         let actionName = 'Bazaar Alış (Buy Order)';
@@ -1218,6 +1230,14 @@
           icon = 'landmark';
           actionBadge = 'bg-purple-500/10 text-purple-400 border-purple-500/20';
           actionName = 'AH Hazır Alım';
+        } else if (s.action_type === 'BUY_NPC') {
+          icon = 'store';
+          actionBadge = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+          actionName = 'NPC Alış';
+        } else if (s.action_type === 'COINS') {
+          icon = 'coins';
+          actionBadge = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+          actionName = 'Oyun İçi Nakit';
         } else if (s.action_type === 'CRAFT') {
           icon = 'hammer';
           actionBadge = 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';

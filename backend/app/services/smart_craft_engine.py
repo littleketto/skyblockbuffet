@@ -1,4 +1,5 @@
 import re
+import math
 import asyncio
 from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
@@ -150,14 +151,44 @@ class SmartCraftEngine:
 
             visiting.add(item_id)
 
+            # Özel Durum: Oyun içi Ham Coinler (Divan Drill, Seyahat Parşömenleri vb.)
+            if item_id in ("SKYBLOCK_COIN", "COINS", "COIN"):
+                memo[item_id] = (1.0, [{
+                    "action": "COINS",
+                    "item_id": item_id,
+                    "item_name": "SkyBlock Coins",
+                    "quantity": 1,
+                    "unit_price": 1.0,
+                    "total_price": 1.0,
+                    "note": "Gerekli oyun içi nakit para maliyeti",
+                    "is_intermediate_craft": False,
+                    "savings_total": 0.0,
+                    "unit_forge_duration": 0.0,
+                }], 0.0)
+                visiting.remove(item_id)
+                return memo[item_id]
+
             item_obj = items_dict.get(item_id)
             item_name = item_obj.name if item_obj else item_id.replace("_", " ").title()
 
             # Secenek 1: Bazaar'dan satin alma maliyeti (Buy Order veya Insta-Buy)
             bazaar_buy_cost = None
             bazaar_action_type = "INSTA_BUY_BAZAAR" if buy_mode == "insta_buy" else "BUY_BAZAAR"
-            if item_id in bazaar_dict:
-                bz_s = bazaar_dict[item_id]
+            
+            # Hyphen ve Colon uyumu (örn: INK_SACK-4 vs INK_SACK:4, LOG-1 vs LOG:1)
+            bz_key = item_id
+            if bz_key not in bazaar_dict:
+                if "-" in bz_key:
+                    cand = bz_key.replace("-", ":")
+                    if cand in bazaar_dict:
+                        bz_key = cand
+                elif ":" in bz_key:
+                    cand = bz_key.replace(":", "-")
+                    if cand in bazaar_dict:
+                        bz_key = cand
+
+            if bz_key in bazaar_dict:
+                bz_s = bazaar_dict[bz_key]
                 if buy_mode == "insta_buy":
                     # Insta-Buy: Aninda almak icin Sell Offer fiyatindan (buy_price) aliriz
                     if float(bz_s.buy_price) > 0:
@@ -176,6 +207,23 @@ class SmartCraftEngine:
             base_name_lower = item_name.lower()
             if base_name_lower in ah_lbin_map:
                 ah_buy_cost = ah_lbin_map[base_name_lower]["price"]
+
+            # Secenek 2.5: NPC'den sabit fiyatla satılan temel malzemeler (Glass, Ice vb.)
+            NPC_BASIC_PRICES = {
+                "GLASS": 1.0,
+                "ICE": 1.0,
+                "PACKED_ICE": 9.0,
+                "DIRT": 1.0,
+                "SAND": 2.0,
+                "GRAVEL": 6.0,
+                "COBBLESTONE": 3.0,
+                "STONE": 3.0,
+                "NETHERRACK": 1.0,
+                "SOUL_SAND": 4.0,
+            }
+            if bazaar_buy_cost is None and ah_buy_cost is None and item_id in NPC_BASIC_PRICES:
+                bazaar_buy_cost = NPC_BASIC_PRICES[item_id]
+                bazaar_action_type = "BUY_NPC"
 
             # Secenek 3: Craftlama / Döküm Maliyeti
             craft_cost = None
@@ -424,10 +472,10 @@ class SmartCraftEngine:
                 formatted_steps: List[SmartCraftStep] = []
                 step_no = 1
 
-                # 1. Alis adimlari (Bazaar / AH Buy)
+                # 1. Alis adimlari (Bazaar / AH Buy / NPC / Coins)
                 buy_groups = defaultdict(lambda: {"qty": 0.0, "total": 0.0, "action": "", "name": "", "notes": []})
                 for s in raw_steps:
-                    if s["action"].startswith("BUY"):
+                    if s["action"].startswith("BUY") or s["action"] == "COINS":
                         k = (s["item_id"], s["action"])
                         buy_groups[k]["qty"] += s["quantity"]
                         buy_groups[k]["total"] += s["total_price"]
@@ -437,7 +485,7 @@ class SmartCraftEngine:
                             buy_groups[k]["notes"].append(s["note"])
 
                 for k, bg in buy_groups.items():
-                    qty = int(round(bg["qty"]))
+                    qty = max(1, int(math.ceil(bg["qty"])))
                     unit_p = bg["total"] / max(1, qty)
                     formatted_steps.append(
                         SmartCraftStep(
@@ -468,8 +516,19 @@ class SmartCraftEngine:
                 total_intermediate_forge_sec = 0
 
                 for item_id, ic in intermediate_crafts.items():
-                    qty = int(round(ic["qty"]))
+                    qty = max(1, int(math.ceil(ic["qty"])))
                     unit_p = ic["total"] / max(1, qty)
+
+                    # Alt tarifin kullandığı doğrudan malzemeleri netleştir
+                    sub_recipe_summary = ""
+                    if item_id in intermediate_recipe_dict:
+                        sub_r = intermediate_recipe_dict[item_id][0]
+                        sub_ings = [
+                            f"{max(1, int(math.ceil(sub_ing.quantity * qty)))}x {items_dict[sub_ing.item_id].name if sub_ing.item_id in items_dict else sub_ing.item_id.replace('_', ' ').title()}"
+                            for sub_ing in sub_r.ingredients
+                        ]
+                        sub_recipe_summary = f" ({', '.join(sub_ings)} ile)"
+
                     if ic["action"] == "FORGE":
                         inter_unit_dur = int(round(ic.get("unit_forge_duration", 0.0)))
                         step_dur_sec = qty * inter_unit_dur
@@ -478,9 +537,9 @@ class SmartCraftEngine:
                             dur_info = f" (⏱️ Toplam: {format_duration(step_dur_sec)} | Adet: {format_duration(inter_unit_dur)})"
                         else:
                             dur_info = ""
-                        note_txt = f"Dwarven Forge'da {qty}x {ic['name']} döküm yap{dur_info}"
+                        note_txt = f"Dwarven Forge'da {qty}x {ic['name']}{sub_recipe_summary} döküm yap{dur_info}"
                     else:
-                        note_txt = f"Crafting Table'da {qty}x {ic['name']} uret"
+                        note_txt = f"Crafting Table'da {qty}x {ic['name']}{sub_recipe_summary} uret"
 
                     if ic["savings"] > 0:
                         note_txt += f" (💡 Sifirdan üretmek, hazir almaktan {round(ic['savings']):,} coins daha ucuz!)"
@@ -503,15 +562,21 @@ class SmartCraftEngine:
                 total_forge_sec = (final_dur_sec + total_intermediate_forge_sec) if is_item_forge else 0
                 total_forge_disp = format_duration(total_forge_sec) if is_item_forge else None
 
+                # Ana tarifin doğrudan kullandığı bileşenlerin özeti
+                recipe_summary = ", ".join(
+                    f"{ing.quantity}x {items_dict[ing.item_id].name if ing.item_id in items_dict else ing.item_id.replace('_', ' ').title()}"
+                    for ing in r.ingredients
+                )
+
                 # 3. Nihai Hedef Uretim Adimi (Crafting Table veya Dwarven Forge)
                 final_action = "FORGE" if is_item_forge else "CRAFT"
                 if is_item_forge:
                     if total_intermediate_forge_sec > 0:
-                        final_note = f"Dwarven Forge'da {final_dur_disp} döküm yap ({r.result_quantity}x {item_name}) [Son Aşama]"
+                        final_note = f"Dwarven Forge'da {recipe_summary} birleştirerek {final_dur_disp} döküm yap ({r.result_quantity}x {item_name}) [Son Aşama]"
                     else:
-                        final_note = f"Dwarven Forge'da {final_dur_disp} döküm yap ({r.result_quantity}x {item_name})"
+                        final_note = f"Dwarven Forge'da {recipe_summary} birleştirerek {final_dur_disp} döküm yap ({r.result_quantity}x {item_name})"
                 else:
-                    final_note = f"Crafting Table'da {r.result_quantity}x {item_name} uret"
+                    final_note = f"Crafting Table'da {recipe_summary} birleştirerek {r.result_quantity}x {item_name} uret"
 
                 formatted_steps.append(
                     SmartCraftStep(
@@ -548,6 +613,7 @@ class SmartCraftEngine:
                     "tier": opt["tier"],
                     "category": opt["category"],
                     "recipe_type": r.recipe_type,
+                    "recipe_summary": recipe_summary,
                     "duration_seconds": total_forge_sec if is_item_forge else 0,
                     "duration_display": total_forge_disp if is_item_forge else "0 sn",
                     "final_duration_seconds": final_dur_sec if is_item_forge else 0,
@@ -730,6 +796,7 @@ class SmartCraftEngine:
                     tier=opt["tier"],
                     category=opt["category"],
                     recipe_type=cand_recipe_type,
+                    recipe_summary=c.get("recipe_summary"),
                     duration_seconds=cand_dur_sec,
                     duration_display=cand_dur_disp,
                     final_duration_seconds=final_dur_sec,

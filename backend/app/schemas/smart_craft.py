@@ -19,6 +19,7 @@ class SmartCraftFlipItem(BaseModel):
     tier: Optional[str] = None
     category: Optional[str] = None
     recipe_type: str = Field("crafting", description="Tarif turu: crafting veya forge")
+    recipe_summary: Optional[str] = Field(None, description="Tarifin doğrudan gereken ana malzemelerinin özeti")
     target_market: str = Field(..., description="AUCTION_HOUSE veya BAZAAR")
     buy_mode: str = Field("buy_order", description="Hammadde alim modu: buy_order veya insta_buy")
     bazaar_sell_mode: str = Field("sell_offer", description="Bazaar satis modu: sell_offer veya insta_sell")
