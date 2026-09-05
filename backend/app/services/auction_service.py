@@ -221,6 +221,8 @@ class AuctionService:
                 display_names: Dict[str, str] = {}
                 item_categories: Dict[str, str] = {}
                 item_coflnet_ids: Dict[str, str] = {}
+                pet_metadata: Dict[str, Dict[str, Any]] = {}
+                pet_species_totals: Dict[str, int] = defaultdict(int)
 
                 for a in bin_auctions:
                     raw_name = a.get("item_name", "")
@@ -245,7 +247,15 @@ class AuctionService:
 
                     # Kullaniciya gosterilecek baslik
                     if is_pet:
-                        pet_display = extract_clean_pet_name(clean_name, info.get("pet_tier") or a.get("tier"))
+                        ptype = info.get("pet_type") or "UNKNOWN"
+                        ptier = info.get("pet_tier") or a.get("tier", "COMMON")
+                        pet_species_totals[ptype] += 1
+                        pet_metadata[item_id] = {
+                            "is_pet": True,
+                            "pet_type": ptype,
+                            "pet_tier": ptier,
+                        }
+                        pet_display = extract_clean_pet_name(clean_name, ptier)
                         if item_id not in display_names or len(pet_display) < len(display_names[item_id]):
                             display_names[item_id] = pet_display
                     else:
@@ -282,6 +292,11 @@ class AuctionService:
                         profit = 0.0
                         margin = 0.0
 
+                    p_meta = pet_metadata.get(item_id, {})
+                    is_pet = p_meta.get("is_pet", False)
+                    # Nadirlik bazli ortalama fiyat
+                    tier_avg = sum(float(x.get("starting_bid", 0)) for x in auctions[:min(5, len(auctions))]) / min(5, len(auctions))
+
                     processed_items.append({
                         "name": display_names.get(item_id, extract_base_item_name(clean_minecraft_text(lbin_auc.get("item_name", item_id)))),
                         "item_id": item_id,
@@ -294,6 +309,10 @@ class AuctionService:
                         "margin": margin,
                         "lbin_auc": lbin_auc,
                         "total_listings": len(auctions),
+                        "is_pet": is_pet,
+                        "pet_type": p_meta.get("pet_type"),
+                        "pet_tier": p_meta.get("pet_tier"),
+                        "tier_avg_price": round(tier_avg, 0),
                     })
 
                 # En yuksek potansiyel kara gore sirala
@@ -319,30 +338,49 @@ class AuctionService:
                     liquidity_status = "ORTA"
                     risk_warning = None
 
-                    if history:
+                    if c["is_pet"]:
+                        # Petlerde nadirlik bazli ozellestirme:
+                        # Bu turun toplam piyasa ilani icindeki bu nadirligin payi
+                        ptype = c["pet_type"]
+                        tot_species = pet_species_totals.get(ptype, c["total_listings"])
+                        rarity_share = c["total_listings"] / max(1, tot_species)
+
+                        base_species_vol = 0
+                        if history and history.get("daily_volume", 0) > 0:
+                            base_species_vol = history["daily_volume"]
+                        else:
+                            # Eger Coflnet verisi yoksa veya erisilemezse aktif ilan donus hizindan tahmin et
+                            base_species_vol = round(tot_species * 1.6)
+
+                        daily_vol = max(1, round(base_species_vol * rarity_share))
+                        # Ortalama satis fiyati genel turun degil, tam bu nadirligin ortalamasidir
+                        avg_price = c["tier_avg_price"]
+
+                    elif history:
                         daily_vol = history.get("daily_volume", 0)
                         avg_price = history.get("avg_price")
+                    else:
+                        # Standart esyalarda eger cok sayida aktif ilan varsa (likit esya)
+                        if c["total_listings"] >= 6 and (second_lbin / max(1.0, lbin)) < 2.5:
+                            daily_vol = round(c["total_listings"] * 1.5)
+                            avg_price = round(second_lbin * 0.99, 0)
 
-                        if daily_vol >= 15:
-                            liquidity_status = "YUKSEK"
-                        elif daily_vol >= 3:
-                            liquidity_status = "ORTA"
-                        else:
-                            liquidity_status = "RISKLI"
-                            risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi."
+                    if daily_vol >= 15:
+                        liquidity_status = "YUKSEK"
+                    elif daily_vol >= 3:
+                        liquidity_status = "ORTA"
+                    else:
+                        liquidity_status = "RISKLI"
+                        risk_warning = f"Son 24 saatte sadece {daily_vol} adet satildi."
 
-                        # Eger 2. LBIN ortalamanin %25 ustundeyse gercek ortalamaya gore kar duzelt
-                        if avg_price and second_lbin > (avg_price * 1.25):
-                            target_sell_price = round(avg_price * 1.02, 0)
-                            profit = round((target_sell_price * 0.98) - lbin, 0)
-                            margin = round((profit / lbin) * 100.0, 1) if lbin > 0 else 0.0
-                        else:
-                            target_sell_price = c["target_sell"]
+                    # Eger 2. LBIN ortalamanin %25 ustundeyse gercek ortalamaya gore kar duzelt
+                    if avg_price and second_lbin > (avg_price * 1.25):
+                        target_sell_price = round(avg_price * 1.02, 0)
+                        profit = round((target_sell_price * 0.98) - lbin, 0)
+                        margin = round((profit / lbin) * 100.0, 1) if lbin > 0 else 0.0
                     else:
                         target_sell_price = c["target_sell"]
-                        if profit > 5000000 and (second_lbin / max(1.0, lbin)) > 4.0:
-                            liquidity_status = "RISKLI"
-                            risk_warning = "2. BIN ile aradaki fark cok yuksek, manipule ilan olabilir."
+
 
                     # PPH (Profit Per Hour - Saatlik Tahmini Kar) Hesabi:
                     if daily_vol > 0 and profit > 0:
