@@ -134,16 +134,30 @@
       </div>
 
       <!-- Hammadde Alis Yontemi: Buy Order vs Insta-Buy -->
-      <div class="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-slate-800 pt-2 sm:pt-0 sm:pl-3 w-full sm:w-auto justify-end">
+      <div class="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-slate-800 pt-2 sm:pt-0 sm:pl-3">
         <span class="text-xs font-medium text-slate-400 px-1 flex items-center gap-1">
           <i data-lucide="shopping-cart" class="w-3.5 h-3.5"></i>
           Hammadde Alışı:
         </span>
         <button onclick="setCraftBuyMode('buy_order')" id="cbm-buy_order" class="cbm-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-600 text-white transition flex items-center gap-1" title="Bazaar'dan sipariş açarak en ucuz hammadde ile maksimum kar">
-          <span>⏳ Buy Order (Sipariş Aç)</span>
+          <span>⏳ Buy Order</span>
         </button>
         <button onclick="setCraftBuyMode('insta_buy')" id="cbm-insta_buy" class="cbm-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1" title="Bazaar'dan anında satın alıp craftlayıp hemen sat">
-          <span>⚡ Insta-Buy (Anında Al)</span>
+          <span>⚡ Insta-Buy</span>
+        </button>
+      </div>
+
+      <!-- Bazaar Satis Yontemi: Sell Offer vs Insta-Sell (AH'de instasell olmadigi icin sadece Bazaar satislarina ozel) -->
+      <div id="craft-bazaar-sell-filter" class="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-slate-800 pt-2 sm:pt-0 sm:pl-3">
+        <span class="text-xs font-medium text-slate-400 px-1 flex items-center gap-1">
+          <i data-lucide="badge-dollar-sign" class="w-3.5 h-3.5 text-emerald-400"></i>
+          Bazaar Satışı:
+        </span>
+        <button onclick="setCraftBazaarSellMode('sell_offer')" id="cbsm-sell_offer" class="cbsm-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white transition flex items-center gap-1" title="Bazaar'a Sell Offer açarak maksimum fiyattan sat">
+          <span>🏷️ Sell Offer (Sipariş Aç)</span>
+        </button>
+        <button onclick="setCraftBazaarSellMode('insta_sell')" id="cbsm-insta_sell" class="cbsm-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-dark-800 text-slate-400 hover:text-white transition flex items-center gap-1" title="Bazaar'a Insta-Sell ile anında nakite çevir">
+          <span>⚡ Insta-Sell (Anında Sat)</span>
         </button>
       </div>
     </div>
@@ -427,6 +441,7 @@
     let currentTab = 'bazaar';
     let craftMarket = 'all';
     let craftBuyMode = 'buy_order';
+    let craftBazaarSellMode = 'sell_offer';
     let auctionCategory = 'all';
     let rawData = [];
     let filteredData = [];
@@ -586,6 +601,17 @@
       const act = document.getElementById(`cm-${m}`);
       act.classList.remove('bg-dark-800', 'text-slate-400');
       act.classList.add('bg-emerald-600', 'text-white');
+
+      // Eger sadece AH secildiyse Bazaar Satis Modu filtresini gizle, diger durumlarda goster
+      const bzFilter = document.getElementById('craft-bazaar-sell-filter');
+      if (bzFilter) {
+        if (m === 'ah') {
+          bzFilter.classList.add('opacity-30', 'pointer-events-none');
+        } else {
+          bzFilter.classList.remove('opacity-30', 'pointer-events-none');
+        }
+      }
+
       loadActiveTab(true);
     }
 
@@ -599,6 +625,21 @@
       if (act) {
         act.classList.remove('bg-dark-800', 'text-slate-400');
         act.classList.add('bg-cyan-600', 'text-white');
+      }
+      currentPage = 1;
+      loadActiveTab(true);
+    }
+
+    function setCraftBazaarSellMode(sm) {
+      craftBazaarSellMode = sm;
+      document.querySelectorAll('.cbsm-btn').forEach(btn => {
+        btn.classList.remove('bg-emerald-600', 'text-white');
+        btn.classList.add('bg-dark-800', 'text-slate-400');
+      });
+      const act = document.getElementById(`cbsm-${sm}`);
+      if (act) {
+        act.classList.remove('bg-dark-800', 'text-slate-400');
+        act.classList.add('bg-emerald-600', 'text-white');
       }
       currentPage = 1;
       loadActiveTab(true);
@@ -647,7 +688,7 @@
       if (currentTab === 'bazaar') {
         url = `/api/v1/bazaar/flips?min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
       } else if (currentTab === 'craft') {
-        url = `/api/v1/craft/smart-flips?market=${craftMarket}&buy_mode=${craftBuyMode}&min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
+        url = `/api/v1/craft/smart-flips?market=${craftMarket}&buy_mode=${craftBuyMode}&bazaar_sell_mode=${craftBazaarSellMode}&min_profit=${minProfit}${budgetParam}&limit=3000${freshParam}`;
       } else if (currentTab === 'auction') {
         let catParam = (auctionCategory && auctionCategory !== 'all') ? `&category=${auctionCategory}` : '';
         url = `/api/v1/auction/flips?min_profit=${minProfit}${budgetParam}${catParam}&limit=6000${freshParam}`;
@@ -762,14 +803,16 @@
         renderPagination(totalItems);
 
         const isInstaBuy = craftBuyMode === 'insta_buy';
+        const isInstaSell = craftBazaarSellMode === 'insta_sell';
         const costHeaderTitle = isInstaBuy ? 'Maliyet (Insta-Buy ⚡)' : 'Maliyet (Buy Order ⏳)';
+        const sellHeaderTitle = isInstaSell ? 'Satış (Insta-Sell ⚡)' : 'Satış Değeri';
 
         thead.innerHTML = `
           <tr>
             ${getSortHeaderHtml('Üretilen Eşya', 'result_name')}
             ${getSortHeaderHtml('Satış Pazarı', 'target_market', 'text-center')}
             ${getSortHeaderHtml(costHeaderTitle, 'optimal_cost', isInstaBuy ? 'text-amber-400' : 'text-cyan-400')}
-            ${getSortHeaderHtml('Satış Değeri', 'sell_price')}
+            ${getSortHeaderHtml(sellHeaderTitle, 'sell_price', isInstaSell ? 'text-amber-400' : '')}
             ${getSortHeaderHtml('24s Ortalama & Hacim', 'volume_24h')}
             ${getSortHeaderHtml('7 Günlük Hacim', 'volume_7d')}
             ${getSortHeaderHtml('Net Kar', 'net_profit', 'text-emerald-400')}
@@ -1033,9 +1076,13 @@
       const item = (filteredData && filteredData[idx]) || (rawData && rawData[idx]);
       if (!item || !item.steps) return;
 
-      const modeText = (item.buy_mode === 'insta_buy') ? '⚡ Insta-Buy (Anında Al)' : '⏳ Buy Order (Sipariş Aç)';
+      const buyModeText = (item.buy_mode === 'insta_buy') ? '⚡ Insta-Buy' : '⏳ Buy Order';
+      let sellModeText = '';
+      if (item.target_market === 'BAZAAR') {
+        sellModeText = ` | Satış: ${(item.bazaar_sell_mode === 'insta_sell') ? '⚡ Insta-Sell' : '🏷️ Sell Offer'}`;
+      }
       document.getElementById('guideTitle').innerText = `${item.result_name} Yapılış Rehberi`;
-      document.getElementById('guideSubtitle').innerText = `Hedef Pazar: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | Alım: ${modeText} | ${item.steps.length} Adım`;
+      document.getElementById('guideSubtitle').innerText = `Hedef: ${item.target_market === 'AUCTION_HOUSE' ? 'Auction House (AH)' : 'Bazaar'} | Alım: ${buyModeText}${sellModeText} | ${item.steps.length} Adım`;
 
       const list = document.getElementById('guideStepsList');
       list.innerHTML = item.steps.map(s => {
@@ -1055,6 +1102,14 @@
           icon = 'hammer';
           actionBadge = 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
           actionName = 'Crafting';
+        } else if (s.action_type === 'INSTA_SELL_BAZAAR') {
+          icon = 'zap';
+          actionBadge = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+          actionName = 'Bazaar Anında Satış (Insta-Sell)';
+        } else if (s.action_type === 'SELL_BAZAAR') {
+          icon = 'badge-dollar-sign';
+          actionBadge = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+          actionName = 'Bazaar Satış (Sell Offer)';
         } else if (s.action_type.startsWith('SELL')) {
           icon = 'badge-dollar-sign';
           actionBadge = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';

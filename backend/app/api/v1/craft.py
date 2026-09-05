@@ -33,6 +33,7 @@ async def get_craft_flips(
 async def get_smart_craft_flips(
     market: str = Query("all", description="all, ah veya bazaar"),
     buy_mode: str = Query("buy_order", description="buy_order veya insta_buy"),
+    bazaar_sell_mode: str = Query("sell_offer", description="sell_offer veya insta_sell"),
     min_profit: float = Query(0.0, description="Minimum net kar (coins)"),
     min_margin: float = Query(0.0, description="Minimum kar marji (ROI %)"),
     max_budget: Optional[float] = Query(None, description="Maksimum butce (coins)"),
@@ -44,11 +45,13 @@ async def get_smart_craft_flips(
     Bazaar'dan alip AH'de satma, cok kademeli esyalarda 'Buy vs Craft' optimizasyonu
     ve sira ile adim adim yapilis rehberini dondurur.
     buy_mode: 'buy_order' (Siparis acarak alma) veya 'insta_buy' (Aninda satin alarak craftlama)
+    bazaar_sell_mode: 'sell_offer' (Bazaar'a siparis acarak satis) veya 'insta_sell' (Bazaar'a aninda bozdurarak satis)
     """
     return await smart_craft_engine.calculate_smart_flips(
         db=db,
         market_filter=market,
         buy_mode=buy_mode,
+        bazaar_sell_mode=bazaar_sell_mode,
         min_profit=min_profit,
         min_margin=min_margin,
         max_budget=max_budget,

@@ -28,6 +28,7 @@ class SmartCraftEngine:
         db: AsyncSession,
         market_filter: str = "all", # "all", "ah", "bazaar"
         buy_mode: str = "buy_order", # "buy_order" veya "insta_buy"
+        bazaar_sell_mode: str = "sell_offer", # "sell_offer" veya "insta_sell"
         min_profit: float = 0.0,
         min_margin: float = 0.0,
         max_budget: Optional[float] = None,
@@ -320,10 +321,20 @@ class SmartCraftEngine:
                         "action_sell": f"Auction House'a Lowest BIN olarak {round(ah_sell_price * 0.99):,} coins fiyata koy",
                     })
 
-            # 2. Option: Bazaar'a satmak
+            # 2. Option: Bazaar'a satmak (Sell Offer veya Insta-Sell)
             if result_item_id in bazaar_dict:
                 bz_snap = bazaar_dict[result_item_id]
-                bz_sell_price = float(bz_snap.buy_price)
+                if bazaar_sell_mode == "insta_sell":
+                    # Insta-Sell: Aninda bozdurmak icin en yuksek Buy Order fiyatindan (sell_price) satariz
+                    bz_sell_price = float(bz_snap.sell_price)
+                    action_sell_txt = f"Bazaar'a Anında Sat (Insta-Sell) ile {round(bz_sell_price):,} coins fiyata sat"
+                    bazaar_sell_action = "INSTA_SELL_BAZAAR"
+                else:
+                    # Sell Offer: Siparis acarak en yuksek fiyattan (buy_price) satariz
+                    bz_sell_price = float(bz_snap.buy_price)
+                    action_sell_txt = f"Bazaar'a Sell Offer olarak {round(bz_sell_price):,} coins fiyata koy"
+                    bazaar_sell_action = "SELL_BAZAAR"
+
                 if bz_sell_price > 0:
                     bz_net_revenue = bz_sell_price * (1 - settings.BAZAAR_TAX_RATE)
                     bz_profit = bz_net_revenue - total_cost
@@ -335,7 +346,8 @@ class SmartCraftEngine:
                             "profit": bz_profit,
                             "tier": item_obj.tier if item_obj else None,
                             "category": item_obj.category if item_obj else None,
-                            "action_sell": f"Bazaar'a Sell Offer olarak {round(bz_sell_price):,} coins fiyata koy",
+                            "action_sell": action_sell_txt,
+                            "sell_action_type": bazaar_sell_action,
                         })
 
             if not sell_options:
@@ -430,10 +442,11 @@ class SmartCraftEngine:
                 step_no += 1
 
                 # 4. Satis Adimi (AH veya Bazaar)
+                sell_step_action = "SELL_AH" if opt["market"] == "AUCTION_HOUSE" else opt.get("sell_action_type", "SELL_BAZAAR")
                 formatted_steps.append(
                     SmartCraftStep(
                         step_number=step_no,
-                        action_type="SELL_AH" if opt["market"] == "AUCTION_HOUSE" else "SELL_BAZAAR",
+                        action_type=sell_step_action,
                         item_name=item_name,
                         item_id=result_item_id,
                         quantity=r.result_quantity,
@@ -481,10 +494,19 @@ class SmartCraftEngine:
 
             if opt["market"] == "BAZAAR" and result_item_id in bazaar_dict:
                 bz_snap = bazaar_dict[result_item_id]
-                vol_7d = int(bz_snap.sell_moving_week)
-                vol_24h = int(round(vol_7d / 7.0))
-                avg_price_24h = round(float(bz_snap.buy_price), 1)
-                avg_price_7d = round(float(bz_snap.buy_price), 1)
+                if bazaar_sell_mode == "insta_sell":
+                    # Insta-sell durumunda buy_moving_week (bekleyen buy order'larin haftalik alim hacmi)
+                    # ve sell_price (anlik satis fiyati) kullanilir
+                    raw_vol_7d = int(bz_snap.buy_moving_week) if bz_snap.buy_moving_week else int(bz_snap.sell_moving_week)
+                    vol_7d = max(0, raw_vol_7d)
+                    vol_24h = int(round(vol_7d / 7.0))
+                    avg_price_24h = round(float(bz_snap.sell_price), 1)
+                    avg_price_7d = round(float(bz_snap.sell_price), 1)
+                else:
+                    vol_7d = int(bz_snap.sell_moving_week)
+                    vol_24h = int(round(vol_7d / 7.0))
+                    avg_price_24h = round(float(bz_snap.buy_price), 1)
+                    avg_price_7d = round(float(bz_snap.buy_price), 1)
 
                 if vol_7d <= 0 or vol_24h <= 0:
                     liquidity_status = "RISKLI"
@@ -595,6 +617,7 @@ class SmartCraftEngine:
                     category=opt["category"],
                     target_market=opt["market"],
                     buy_mode=buy_mode,
+                    bazaar_sell_mode=bazaar_sell_mode,
                     optimal_cost=round(total_cost, 1),
                     sell_price=round(opt["price"], 1),
                     net_revenue=round(opt["net_revenue"], 1),

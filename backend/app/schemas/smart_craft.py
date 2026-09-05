@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class SmartCraftStep(BaseModel):
     step_number: int
-    action_type: str = Field(..., description="BUY_BAZAAR, INSTA_BUY_BAZAAR, BUY_AH, CRAFT, SELL_AH, SELL_BAZAAR")
+    action_type: str = Field(..., description="BUY_BAZAAR, INSTA_BUY_BAZAAR, BUY_AH, CRAFT, SELL_AH, SELL_BAZAAR, INSTA_SELL_BAZAAR")
     item_name: str
     item_id: Optional[str] = None
     quantity: int
@@ -20,6 +20,7 @@ class SmartCraftFlipItem(BaseModel):
     category: Optional[str] = None
     target_market: str = Field(..., description="AUCTION_HOUSE veya BAZAAR")
     buy_mode: str = Field("buy_order", description="Hammadde alim modu: buy_order veya insta_buy")
+    bazaar_sell_mode: str = Field("sell_offer", description="Bazaar satis modu: sell_offer veya insta_sell")
 
     optimal_cost: float = Field(..., description="Akilli secimlerle minimize edilmis toplam maliyet")
     sell_price: float = Field(..., description="Satis fiyati")
