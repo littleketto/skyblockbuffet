@@ -1,4 +1,4 @@
-﻿from typing import List, Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,10 +32,10 @@ async def get_craft_flips(
 @router.get("/smart-flips", response_model=List[SmartCraftFlipItem])
 async def get_smart_craft_flips(
     market: str = Query("all", description="all, ah veya bazaar"),
-    min_profit: float = Query(20000.0, description="Minimum net kar (coins)"),
-    min_margin: float = Query(15.0, description="Minimum kar marji (ROI %)"),
+    min_profit: float = Query(0.0, description="Minimum net kar (coins)"),
+    min_margin: float = Query(0.0, description="Minimum kar marji (ROI %)"),
     max_budget: Optional[float] = Query(None, description="Maksimum butce (coins)"),
-    limit: int = Query(50, ge=1, le=100, description="Listelenecek firsat sayisi"),
+    limit: int = Query(3000, ge=1, le=10000, description="Listelenecek firsat sayisi"),
     db: AsyncSession = Depends(get_db),
 ):
     """

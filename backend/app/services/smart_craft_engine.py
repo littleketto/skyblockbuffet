@@ -26,10 +26,10 @@ class SmartCraftEngine:
         self,
         db: AsyncSession,
         market_filter: str = "all", # "all", "ah", "bazaar"
-        min_profit: float = 20000.0,
-        min_margin: float = 15.0,
+        min_profit: float = 0.0,
+        min_margin: float = 0.0,
         max_budget: Optional[float] = None,
-        limit: int = 50,
+        limit: int = 3000,
     ) -> List[SmartCraftFlipItem]:
         print("Smart Craft Engine: Piyasa verileri ve aktif ilanlar toplaniyor...")
 
