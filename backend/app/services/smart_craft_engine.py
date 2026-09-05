@@ -12,6 +12,7 @@ from app.models.recipe import Recipe, RecipeIngredient
 from app.models.bazaar import BazaarSnapshot
 from app.schemas.smart_craft import SmartCraftFlipItem, SmartCraftStep
 from app.services.auction_service import auction_service, clean_minecraft_text, extract_base_item_name, extract_item_info_from_bytes
+from app.services.coflnet_service import coflnet_service
 
 
 class SmartCraftEngine:
@@ -246,8 +247,8 @@ class SmartCraftEngine:
             visiting.remove(item_id)
             return memo[item_id]
 
-        # 6. Tum tarifler icin en karli ciktiyi hesapla
-        results: List[SmartCraftFlipItem] = []
+        # 6. Tum tarifler icin en karli cikti adaylarini topla
+        candidates: List[Dict[str, Any]] = []
 
         for result_item_id, recipes in recipe_dict.items():
             r = recipes[0]
@@ -428,64 +429,95 @@ class SmartCraftEngine:
                     )
                 )
 
-                if opt["market"] == "BAZAAR" and result_item_id in bazaar_dict:
-                    bz_snap = bazaar_dict[result_item_id]
-                    vol_7d = int(bz_snap.sell_moving_week)
-                    vol_24h = int(round(vol_7d / 7.0))
-                    avg_price_24h = round(float(bz_snap.buy_price), 1)
-                    avg_price_7d = round(float(bz_snap.buy_price), 1)
+                candidates.append({
+                    "result_item_id": result_item_id,
+                    "item_name": item_name,
+                    "tier": opt["tier"],
+                    "category": opt["category"],
+                    "opt": opt,
+                    "total_cost": total_cost,
+                    "profit": profit,
+                    "margin_pct": margin_pct,
+                    "total_savings": total_savings,
+                    "formatted_steps": formatted_steps,
+                })
 
-                    if vol_7d <= 0 or vol_24h <= 0:
-                        liquidity_status = "RISKLI"
-                        risk_warning = "Bazaar'da talep yok (Hacim: 0). Satın alan oyuncu yok!"
-                        hourly_vol = 0
-                        pph = 0.0
-                    else:
-                        hourly_vol = max(1, round(vol_24h / 24.0))
-                        if vol_24h >= 20:
-                            liquidity_status = "YUKSEK"
-                            risk_warning = None
-                        elif vol_24h >= 5:
-                            liquidity_status = "ORTA"
-                            risk_warning = None
-                        else:
-                            liquidity_status = "RISKLI"
-                            risk_warning = f"Son 24 saatte sadece {vol_24h} adet satıldı."
-                        hourly_cap = min(15.0, max(0.1, hourly_vol * 0.12))
-                        pph = round(profit * hourly_cap, 0)
+        # AH hedeflerinin gercek satis gecmisini Coflnet'ten paralel cek
+        ah_candidates = [c for c in candidates if c["opt"]["market"] == "AUCTION_HOUSE"]
+        ah_candidates.sort(key=lambda c: c["profit"], reverse=True)
+        top_ah_ids = list(dict.fromkeys(c["result_item_id"] for c in ah_candidates[:40]))
+
+        histories_map: Dict[str, Any] = {}
+        if top_ah_ids:
+            try:
+                histories_map = await coflnet_service.get_multiple_items_history_24h(top_ah_ids, max_concurrent=10)
+            except Exception as e:
+                print(f"Coflnet batch cekme hatasi: {e}")
+
+        results: List[SmartCraftFlipItem] = []
+        for c in candidates:
+            result_item_id = c["result_item_id"]
+            item_name = c["item_name"]
+            opt = c["opt"]
+            total_cost = c["total_cost"]
+            profit = c["profit"]
+            margin_pct = c["margin_pct"]
+            total_savings = c["total_savings"]
+            formatted_steps = c["formatted_steps"]
+
+            if opt["market"] == "BAZAAR" and result_item_id in bazaar_dict:
+                bz_snap = bazaar_dict[result_item_id]
+                vol_7d = int(bz_snap.sell_moving_week)
+                vol_24h = int(round(vol_7d / 7.0))
+                avg_price_24h = round(float(bz_snap.buy_price), 1)
+                avg_price_7d = round(float(bz_snap.buy_price), 1)
+
+                if vol_7d <= 0 or vol_24h <= 0:
+                    liquidity_status = "RISKLI"
+                    risk_warning = "Bazaar'da talep yok (Hacim: 0). Satın alan oyuncu yok!"
+                    hourly_vol = 0
+                    pph = 0.0
                 else:
-                    # AUCTION_HOUSE
-                    base_lower = item_name.lower()
-                    ah_info = ah_lbin_map.get(base_lower, {})
-                    listings_count = ah_info.get("listings_count", 1)
-                    median_p = ah_info.get("median_price", opt["price"])
-
-                    # Absurt / Sahte Ilan Kontrolu:
-                    # Pazar fiyati maliyetinin 10 katindan fazla ve tek aktif ilansa (orn: 4 coins maliyet -> 538M satis)
-                    is_absurd_markup = (listings_count <= 1 and (opt["price"] / max(1.0, total_cost)) > 10.0 and opt["price"] > 10_000_000)
-
-                    if is_absurd_markup or listings_count <= 1:
-                        vol_24h = 0
-                        vol_7d = 0
-                        avg_price_24h = round(opt["price"], 0)
-                        avg_price_7d = round(opt["price"], 0)
+                    hourly_vol = max(1, round(vol_24h / 24.0))
+                    if vol_24h >= 20:
+                        liquidity_status = "YUKSEK"
+                        risk_warning = None
+                    elif vol_24h >= 5:
+                        liquidity_status = "ORTA"
+                        risk_warning = None
+                    else:
                         liquidity_status = "RISKLI"
-                        if is_absurd_markup:
-                            risk_warning = "⚠️ Absürt / Sahte Satış Fiyatı! Pazarda sadece 1 ilan var."
-                        else:
-                            risk_warning = "Pazarda hiç satılmadı (Hacim: 0, tek aktif ilan)."
+                        risk_warning = f"Son 24 saatte sadece {vol_24h} adet satıldı."
+                    hourly_cap = min(15.0, max(0.1, hourly_vol * 0.12))
+                    pph = round(profit * hourly_cap, 0)
+            else:
+                # AUCTION_HOUSE
+                base_lower = item_name.lower()
+                ah_info = ah_lbin_map.get(base_lower, {})
+                listings_count = ah_info.get("listings_count", 1)
+                median_p = ah_info.get("median_price", opt["price"])
+                history = histories_map.get(result_item_id)
+
+                # Absurt / Sahte Ilan Kontrolu (Maliyeti cok dusuk ama ilan fiyati asiri sisirilmis sahte ilanlar)
+                is_absurd_markup = (listings_count <= 1 and (opt["price"] / max(1.0, total_cost)) > 10.0 and opt["price"] > 10_000_000)
+
+                if history and history.get("daily_volume", 0) > 0:
+                    vol_24h = history["daily_volume"]
+                    vol_7d = vol_24h * 7
+                    avg_price_24h = round(history["avg_price"], 0)
+                    avg_price_7d = round(history["avg_price"], 0)
+
+                    # Eger aktif ilan, 24 saatlik gercek satis ortalamasindan 3 kat fazlaysa ve tek ilansa sahtedir
+                    if opt["price"] > 3.0 * avg_price_24h and listings_count <= 2:
+                        liquidity_status = "RISKLI"
+                        risk_warning = f"⚠️ İlan fiyatı ({round(opt['price']):,}) 24s ortalamadan ({round(avg_price_24h):,}) çok yüksek!"
                         hourly_vol = 0
                         pph = 0.0
                     else:
-                        vol_24h = max(1, round(listings_count * 1.5))
-                        vol_7d = max(7, round(vol_24h * 7))
-                        avg_price_24h = round(median_p, 0)
-                        avg_price_7d = round(median_p, 0)
-
-                        if vol_24h >= 15:
+                        if vol_24h >= 10:
                             liquidity_status = "YUKSEK"
                             risk_warning = None
-                        elif vol_24h >= 4:
+                        elif vol_24h >= 3:
                             liquidity_status = "ORTA"
                             risk_warning = None
                         else:
@@ -496,30 +528,75 @@ class SmartCraftEngine:
                         hourly_cap = min(12.0, max(0.1, hourly_vol * 0.15))
                         pph = round(profit * hourly_cap, 0)
 
-                results.append(
-                    SmartCraftFlipItem(
-                        result_item_id=result_item_id,
-                        result_name=item_name,
-                        tier=opt["tier"],
-                        category=opt["category"],
-                        target_market=opt["market"],
-                        optimal_cost=round(total_cost, 1),
-                        sell_price=round(opt["price"], 1),
-                        net_revenue=round(opt["net_revenue"], 1),
-                        net_profit=round(profit, 1),
-                        margin_percent=round(margin_pct, 1),
-                        savings=round(total_savings, 1),
-                        hourly_volume=hourly_vol,
-                        profit_per_hour=round(pph, 1),
-                        avg_price_24h=avg_price_24h,
-                        volume_24h=vol_24h,
-                        avg_price_7d=avg_price_7d,
-                        volume_7d=vol_7d,
-                        liquidity_status=liquidity_status,
-                        risk_warning=risk_warning,
-                        steps=formatted_steps,
-                    )
+                elif is_absurd_markup:
+                    # Sadece gercekten sahte/manipule ilanlar 0 hacimli yapilir
+                    vol_24h = 0
+                    vol_7d = 0
+                    avg_price_24h = round(opt["price"], 0)
+                    avg_price_7d = round(opt["price"], 0)
+                    liquidity_status = "RISKLI"
+                    risk_warning = "⚠️ Absürt / Sahte Satış Fiyatı! Pazarda sadece 1 ilan var."
+                    hourly_vol = 0
+                    pph = 0.0
+
+                else:
+                    # Mesru craft esyasi (Gigantic Fishing Net vb.):
+                    # Yuksek degerli esyalar pazarda dogal olarak az sayida ilana sahiptir, 0 hacimli degildir.
+                    if total_cost >= 10_000_000 or opt["price"] >= 15_000_000:
+                        if listings_count >= 3:
+                            vol_24h = round(listings_count * 2.0)
+                        elif listings_count == 2:
+                            vol_24h = 5
+                        else:
+                            vol_24h = 3
+                        vol_7d = vol_24h * 7
+                        avg_price_24h = round(median_p, 0)
+                        avg_price_7d = round(median_p, 0)
+                        liquidity_status = "ORTA"
+                        risk_warning = None if listings_count >= 2 else "Pazarda 1 aktif ilan var (~3 satış/gün)."
+                        hourly_vol = max(1, round(vol_24h / 24.0))
+                        hourly_cap = min(12.0, max(0.1, hourly_vol * 0.15))
+                        pph = round(profit * hourly_cap, 0)
+                    else:
+                        if listings_count >= 3:
+                            vol_24h = round(listings_count * 1.5)
+                        elif listings_count == 2:
+                            vol_24h = 3
+                        else:
+                            vol_24h = 2
+                        vol_7d = vol_24h * 7
+                        avg_price_24h = round(median_p, 0)
+                        avg_price_7d = round(median_p, 0)
+                        liquidity_status = "ORTA" if vol_24h >= 4 else "RISKLI"
+                        risk_warning = None if listings_count >= 2 else "Pazarda 1 aktif ilan var."
+                        hourly_vol = max(1, round(vol_24h / 24.0))
+                        hourly_cap = min(12.0, max(0.1, hourly_vol * 0.15))
+                        pph = round(profit * hourly_cap, 0)
+
+            results.append(
+                SmartCraftFlipItem(
+                    result_item_id=result_item_id,
+                    result_name=item_name,
+                    tier=opt["tier"],
+                    category=opt["category"],
+                    target_market=opt["market"],
+                    optimal_cost=round(total_cost, 1),
+                    sell_price=round(opt["price"], 1),
+                    net_revenue=round(opt["net_revenue"], 1),
+                    net_profit=round(profit, 1),
+                    margin_percent=round(margin_pct, 1),
+                    savings=round(total_savings, 1),
+                    hourly_volume=hourly_vol,
+                    profit_per_hour=round(pph, 1),
+                    avg_price_24h=avg_price_24h,
+                    volume_24h=vol_24h,
+                    avg_price_7d=avg_price_7d,
+                    volume_7d=vol_7d,
+                    liquidity_status=liquidity_status,
+                    risk_warning=risk_warning,
+                    steps=formatted_steps,
                 )
+            )
 
         # Siralama: Yuksek saatlik kar ve likiditeye sahip gercek firsatlar en basa,
         # 0 hacimli sahte / absurt ilanlar en sona

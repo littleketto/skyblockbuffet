@@ -39,34 +39,45 @@ class CoflnetService:
             return cached["data"]
 
         url = f"{self.base_url}/{item_id}/history/day"
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                res = await client.get(url, headers=self.headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    if isinstance(data, list) and len(data) > 0:
-                        total_volume = sum(d.get("volume", 0) for d in data)
-                        if total_volume > 0:
-                            avg_price = sum(d.get("avg", 0) * d.get("volume", 0) for d in data) / total_volume
-                            min_price = min(d.get("min", 0) for d in data if d.get("min", 0) > 0)
-                            max_price = max(d.get("max", 0) for d in data)
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=7.0) as client:
+                    res = await client.get(url, headers=self.headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        if isinstance(data, list) and len(data) > 0:
+                            total_volume = sum(d.get("volume", 0) for d in data if d.get("volume"))
+                            if total_volume > 0:
+                                avg_price = sum(d.get("avg", 0) * d.get("volume", 0) for d in data) / total_volume
+                                valid_mins = [d.get("min", 0) for d in data if d.get("min", 0) and d.get("min", 0) > 0]
+                                min_price = min(valid_mins) if valid_mins else avg_price
+                                valid_maxs = [d.get("max", 0) for d in data if d.get("max", 0) and d.get("max", 0) > 0]
+                                max_price = max(valid_maxs) if valid_maxs else avg_price
 
-                            result = {
-                                "daily_volume": total_volume,
-                                "avg_price": round(avg_price, 0),
-                                "min_price": round(min_price, 0),
-                                "max_price": round(max_price, 0),
-                            }
-                            # Cache'e kaydet
-                            _cache[item_id] = {"timestamp": now, "data": result}
-                            return result
-        except Exception:
-            pass
+                                result = {
+                                    "daily_volume": int(total_volume),
+                                    "avg_price": round(avg_price, 0),
+                                    "min_price": round(min_price, 0),
+                                    "max_price": round(max_price, 0),
+                                }
+                                # Cache'e kaydet
+                                _cache[item_id] = {"timestamp": now, "data": result}
+                                return result
+                        return None
+                    elif res.status_code in (403, 429):
+                        await asyncio.sleep(0.3 * (attempt + 1))
+                        continue
+                    else:
+                        return None
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(0.3)
+                pass
 
         return None
 
     async def get_multiple_items_history_24h(
-        self, item_ids: List[str], max_concurrent: int = 25
+        self, item_ids: List[str], max_concurrent: int = 8
     ) -> Dict[str, Optional[Dict[str, Any]]]:
         """
         Birden fazla esyanin 24 saatlik verisini baglanti havuzu ve semaforla cok hizli sekilde ceker.
@@ -90,36 +101,49 @@ class CoflnetService:
 
         # Eksik olanlari paralel cek
         sem = asyncio.Semaphore(max_concurrent)
-        limits = httpx.Limits(max_keepalive_connections=30, max_connections=40)
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=25)
 
         async def _fetch_single(client: httpx.AsyncClient, iid: str):
             async with sem:
                 url = f"{self.base_url}/{iid}/history/day"
-                try:
-                    res = await client.get(url, headers=self.headers)
-                    if res.status_code == 200:
-                        data = res.json()
-                        if isinstance(data, list) and len(data) > 0:
-                            total_volume = sum(d.get("volume", 0) for d in data)
-                            if total_volume > 0:
-                                avg_price = sum(d.get("avg", 0) * d.get("volume", 0) for d in data) / total_volume
-                                min_price = min(d.get("min", 0) for d in data if d.get("min", 0) > 0)
-                                max_price = max(d.get("max", 0) for d in data)
+                for attempt in range(3):
+                    try:
+                        res = await client.get(url, headers=self.headers)
+                        if res.status_code == 200:
+                            data = res.json()
+                            if isinstance(data, list) and len(data) > 0:
+                                total_volume = sum(d.get("volume", 0) for d in data if d.get("volume"))
+                                if total_volume > 0:
+                                    avg_price = sum(d.get("avg", 0) * d.get("volume", 0) for d in data) / total_volume
+                                    valid_mins = [d.get("min", 0) for d in data if d.get("min", 0) and d.get("min", 0) > 0]
+                                    min_price = min(valid_mins) if valid_mins else avg_price
+                                    valid_maxs = [d.get("max", 0) for d in data if d.get("max", 0) and d.get("max", 0) > 0]
+                                    max_price = max(valid_maxs) if valid_maxs else avg_price
 
-                                r = {
-                                    "daily_volume": total_volume,
-                                    "avg_price": round(avg_price, 0),
-                                    "min_price": round(min_price, 0),
-                                    "max_price": round(max_price, 0),
-                                }
-                                _cache[iid] = {"timestamp": time.time(), "data": r}
-                                results[iid] = r
-                                return
-                except Exception:
-                    pass
+                                    r = {
+                                        "daily_volume": int(total_volume),
+                                        "avg_price": round(avg_price, 0),
+                                        "min_price": round(min_price, 0),
+                                        "max_price": round(max_price, 0),
+                                    }
+                                    _cache[iid] = {"timestamp": time.time(), "data": r}
+                                    results[iid] = r
+                                    return
+                            results[iid] = None
+                            return
+                        elif res.status_code in (403, 429):
+                            await asyncio.sleep(0.3 * (attempt + 1))
+                            continue
+                        else:
+                            results[iid] = None
+                            return
+                    except Exception:
+                        if attempt < 2:
+                            await asyncio.sleep(0.2)
+                        pass
                 results[iid] = None
 
-        async with httpx.AsyncClient(limits=limits, timeout=4.5) as client:
+        async with httpx.AsyncClient(limits=limits, timeout=8.0) as client:
             tasks = [_fetch_single(client, iid) for iid in missing_ids]
             await asyncio.gather(*tasks)
 

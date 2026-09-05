@@ -758,7 +758,9 @@
 
           const vol24hDisplay = item.volume_24h > 0
             ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_24h)}</span> <span class="text-[10px] text-slate-500">satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_24h)} ort.</div>`
-            : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`;
+            : (isAH 
+                ? `<button onclick="querySingleAHHistory('${item.result_item_id}', '${item.result_name.replace(/'/g, "\\'")}')" class="text-[10px] text-cyan-400 underline hover:text-cyan-300 font-semibold" title="Coflnet API'sinden anlık satış geçmişi sorgula">0 satış (Sorgula)</button>`
+                : `<span class="text-rose-400 text-xs font-semibold">0 satış</span>`);
 
           const vol7dDisplay = item.volume_7d > 0
             ? `<div><span class="text-slate-200 font-bold">${formatNumber(item.volume_7d)}</span> <span class="text-[10px] text-slate-500">7g satış</span></div><div class="text-[10px] text-slate-400">${formatNumber(item.avg_price_7d)} ort.</div>`
@@ -1238,12 +1240,23 @@
         loading.classList.add('hidden');
         content.classList.remove('hidden');
 
-        // Tablodaki bu item'ın daily_volume değerini de hafızada güncelle
+        // Tablodaki bu item'ın daily_volume ve 24s/7g değerlerini de hafızada güncelle
         if (filteredData) {
-          const target = filteredData.find(x => x.item_id === itemId || x.item_name === itemName);
+          const target = filteredData.find(x => x.item_id === itemId || x.result_item_id === itemId || x.item_name === itemName || x.result_name === itemName);
           if (target) {
             target.daily_volume = data.daily_volume;
             target.avg_sold_price = data.avg_price;
+            target.volume_24h = data.daily_volume;
+            target.avg_price_24h = data.avg_price;
+            target.volume_7d = data.daily_volume * 7;
+            target.avg_price_7d = data.avg_price;
+            if (target.risk_warning && data.daily_volume > 0) target.risk_warning = null;
+            if ((target.profit_per_hour === 0 || !target.profit_per_hour) && (target.net_profit || 0) > 0 && data.daily_volume > 0) {
+              const h_vol = Math.max(1, Math.round(data.daily_volume / 24));
+              const h_cap = Math.min(12, Math.max(0.1, h_vol * 0.15));
+              target.profit_per_hour = Math.round(target.net_profit * h_cap);
+            }
+            renderTable(filteredData, false);
           }
         }
       } catch (err) {
